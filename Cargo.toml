@@ -4,3 +4,6 @@ version = "0.1.0"
 authors = ["Steven Fackler <sfackler@gmail.com>"]
 
 [dependencies]
+antidote = "1.0"
+hyper = { version = "0.9", default_features = false }
+openssl = "0.9"
