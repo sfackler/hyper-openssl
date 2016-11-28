@@ -52,9 +52,11 @@
 //! use std::fs::File;
 //!
 //! fn main() {
-//!     let mut file = File::open("identity.pfx").unwrap();
 //!     let mut pkcs12 = vec![];
-//!     file.read_to_end(&mut pkcs12).unwrap();
+//!     File::open("identity.pfx")
+//!         .unwrap()
+//!         .read_to_end(&mut pkcs12)
+//!         .unwrap();
 //!     let pkcs12 = Pkcs12::from_der(&pkcs12)
 //!         .unwrap()
 //!         .parse("hunter2")
