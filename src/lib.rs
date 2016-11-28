@@ -41,11 +41,11 @@ impl<T> SslClient<T> for OpensslClient
 }
 
 #[derive(Clone)]
-pub struct OpensslServer(Arc<SslAcceptor>);
+pub struct OpensslServer(SslAcceptor);
 
 impl From<SslAcceptor> for OpensslServer {
     fn from(acceptor: SslAcceptor) -> OpensslServer {
-        OpensslServer(Arc::new(acceptor))
+        OpensslServer(acceptor)
     }
 }
 
@@ -144,7 +144,7 @@ mod test {
         mem::forget(listening);
 
         let mut connector = SslConnectorBuilder::new(SslMethod::tls()).unwrap();
-        connector.builder_mut().set_ca_file("test/cert.pem").unwrap();
+        connector.builder_mut().cert_store_mut().add_cert(cert).unwrap();
         let ssl = OpensslClient::from(connector.build());
         let connector = HttpsConnector::new(ssl);
         let client = Client::with_connector(connector);
