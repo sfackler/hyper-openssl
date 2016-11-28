@@ -1,3 +1,78 @@
+//! Hyper SSL support via modern versions of OpenSSL.
+//!
+//! Hyper's built in OpenSSL support depends on version 0.7 of `openssl`. This crate provides
+//! SSL support using version 0.9 of `openssl`.
+//!
+//! # Usage
+//!
+//! Hyper's `ssl` feature is enabled by default, so it must be explicitly turned off in your
+//! Cargo.toml:
+//!
+//! ```toml
+//! [dependencies]
+//! hyper = { version = "0.9", default_features = false }
+//! hyper-openssl = "0.1"
+//! ```
+//!
+//! Then on the client side:
+//!
+//! ```
+//! extern crate hyper;
+//! extern crate hyper_openssl;
+//!
+//! use hyper::Client;
+//! use hyper::net::HttpsConnector;
+//! use hyper_openssl::OpensslClient;
+//! use std::io::Read;
+//!
+//! fn main() {
+//!     let ssl = OpensslClient::new().unwrap();
+//!     let connector = HttpsConnector::new(ssl);
+//!     let client = Client::with_connector(connector);
+//!
+//!     let mut resp = client.get("https://google.com").send().unwrap();
+//!     let mut body = vec![];
+//!     resp.read_to_end(&mut body).unwrap();
+//!     println!("{}", String::from_utf8_lossy(&body));
+//! }
+//! ```
+//!
+//! Or on the server side:
+//!
+//! ```no_run
+//! extern crate hyper;
+//! extern crate hyper_openssl;
+//! extern crate openssl;
+//!
+//! use hyper::Server;
+//! use hyper_openssl::OpensslServer;
+//! use openssl::ssl::{SslMethod, SslAcceptorBuilder};
+//! use openssl::pkcs12::Pkcs12;
+//! use std::io::Read;
+//! use std::fs::File;
+//!
+//! fn main() {
+//!     let mut file = File::open("identity.pfx").unwrap();
+//!     let mut pkcs12 = vec![];
+//!     file.read_to_end(&mut pkcs12).unwrap();
+//!     let pkcs12 = Pkcs12::from_der(&pkcs12)
+//!         .unwrap()
+//!         .parse("hunter2")
+//!         .unwrap();
+//!
+//!     let acceptor = SslAcceptorBuilder::mozilla_intermediate(SslMethod::tls(),
+//!                                                             &pkcs12.pkey,
+//!                                                             &pkcs12.cert,
+//!                                                             pkcs12.chain)
+//!         .unwrap()
+//!         .build();
+//!     let ssl = OpensslServer::from(acceptor);
+//!
+//!     let server = Server::https("0.0.0.0:8443", ssl).unwrap();
+//! }
+//! ```
+#![warn(missing_docs)]
+
 extern crate antidote;
 extern crate hyper;
 extern crate openssl;
@@ -12,9 +87,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::fmt::Debug;
 
+/// An `SslClient` implementation using OpenSSL.
+#[derive(Clone)]
 pub struct OpensslClient(SslConnector);
 
 impl OpensslClient {
+    /// Creates a new `OpenSslClient` with default settings.
     pub fn new() -> Result<OpensslClient, ErrorStack> {
         let connector = try!(SslConnectorBuilder::new(SslMethod::tls())).build();
         Ok(OpensslClient(connector))
@@ -40,6 +118,7 @@ impl<T> SslClient<T> for OpensslClient
     }
 }
 
+/// An `SslServer` implementation using OpenSSL.
 #[derive(Clone)]
 pub struct OpensslServer(SslAcceptor);
 
@@ -62,6 +141,7 @@ impl<T> SslServer<T> for OpensslServer
     }
 }
 
+/// A Hyper SSL stream.
 #[derive(Clone)]
 pub struct SslStream<T>(Arc<Mutex<ssl::SslStream<T>>>);
 
@@ -135,7 +215,7 @@ mod test {
             .unwrap()
             .build();
         let ssl = OpensslServer::from(acceptor);
-        let server = Server::https("0.0.0.0:0", ssl).unwrap();
+        let server = Server::https("127.0.0.1:0", ssl).unwrap();
 
         let listening = server.handle(|_: Request, resp: Response<Fresh>| {
             resp.send(b"hello").unwrap()
