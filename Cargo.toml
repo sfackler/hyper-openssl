@@ -5,7 +5,7 @@ authors = ["Steven Fackler <sfackler@gmail.com>"]
 description = "Hyper SSL support via modern versions of openssl"
 license = "MIT/Apache-2.0"
 repository = "https://github.com/sfackler/rust-hyper-openssl"
-documentation = "https://sfackler.github.io/rust-hyper-openssl/doc/v0.1.0/hyper_openssl"
+documentation = "https://docs.rs/hyper-openssl/0.1.0/hyper_openssl"
 readme = "README.md"
 
 [dependencies]

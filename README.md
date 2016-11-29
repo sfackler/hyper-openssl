@@ -1,7 +1,7 @@
 # hyper-openssl
 [![Build Status](https://travis-ci.org/sfackler/rust-hyper-openssl.svg?branch=master)](https://travis-ci.org/sfackler/rust-hyper-openssl)
 
-[Documentation](https://sfackler.github.io/rust-hyper-openssl/doc/v0.1.0/hyper_openssl)
+[Documentation](https://docs.rs/hyper-openssl/0.1.0/hyper_openssl)
 
 Hyper SSL support via modern versions of openssl.
 
