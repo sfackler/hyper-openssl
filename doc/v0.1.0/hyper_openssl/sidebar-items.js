@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["OpensslClient","An `SslClient` implementation using OpenSSL."],["OpensslServer","An `SslServer` implementation using OpenSSL."],["SslStream","A Hyper SSL stream."]]});
