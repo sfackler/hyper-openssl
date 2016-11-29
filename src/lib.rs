@@ -74,6 +74,7 @@
 //! }
 //! ```
 #![warn(missing_docs)]
+#![doc(html_root_url="https://sfackler.github.io/rust-hyper-openssl/doc/v0.1.0")]
 
 extern crate antidote;
 extern crate hyper;
