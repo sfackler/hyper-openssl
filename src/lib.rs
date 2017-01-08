@@ -42,7 +42,6 @@
 //! ```no_run
 //! extern crate hyper;
 //! extern crate hyper_openssl;
-//! extern crate openssl;
 //!
 //! use hyper::Server;
 //! use hyper_openssl::OpensslServer;
