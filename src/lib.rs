@@ -46,30 +46,11 @@
 //!
 //! use hyper::Server;
 //! use hyper_openssl::OpensslServer;
-//! use openssl::ssl::{SslMethod, SslAcceptorBuilder};
-//! use openssl::pkcs12::Pkcs12;
 //! use std::io::Read;
 //! use std::fs::File;
 //!
 //! fn main() {
-//!     let mut pkcs12 = vec![];
-//!     File::open("identity.pfx")
-//!         .unwrap()
-//!         .read_to_end(&mut pkcs12)
-//!         .unwrap();
-//!     let pkcs12 = Pkcs12::from_der(&pkcs12)
-//!         .unwrap()
-//!         .parse("hunter2")
-//!         .unwrap();
-//!
-//!     let acceptor = SslAcceptorBuilder::mozilla_intermediate(SslMethod::tls(),
-//!                                                             &pkcs12.pkey,
-//!                                                             &pkcs12.cert,
-//!                                                             pkcs12.chain)
-//!         .unwrap()
-//!         .build();
-//!     let ssl = OpensslServer::from(acceptor);
-//!
+//!     let ssl = OpensslServer::from_files("private_key.pem", "certificate_chain.pem").unwrap();
 //!     let server = Server::https("0.0.0.0:8443", ssl).unwrap();
 //! }
 //! ```
@@ -83,12 +64,15 @@ extern crate openssl;
 use antidote::Mutex;
 use hyper::net::{SslClient, SslServer, NetworkStream};
 use openssl::error::ErrorStack;
-use openssl::ssl::{self, SslMethod, SslConnector, SslConnectorBuilder, SslAcceptor};
+use openssl::ssl::{self, SslMethod, SslConnector, SslConnectorBuilder, SslAcceptor,
+                   SslAcceptorBuilder};
+use openssl::x509::X509_FILETYPE_PEM;
+use std::fmt::Debug;
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use std::fmt::Debug;
 
 /// An `SslClient` implementation using OpenSSL.
 #[derive(Clone)]
@@ -124,6 +108,30 @@ impl<T> SslClient<T> for OpensslClient
 /// An `SslServer` implementation using OpenSSL.
 #[derive(Clone)]
 pub struct OpensslServer(SslAcceptor);
+
+impl OpensslServer {
+    /// Constructs an `OpensslServer` with a reasonable default configuration.
+    ///
+    /// This currently corresponds to the Intermediate profile of the
+    /// [Mozilla Server Side TLS recommendations][mozilla], but is subject to change. It should be
+    /// compatible with everything but the very oldest clients (notably Internet Explorer 6 on
+    /// Windows XP and Java 6).
+    ///
+    /// The `key` file should contain the server's PEM-formatted private key, and the `certs` file
+    /// should contain a sequence of PEM-formatted certificates, starting with the leaf certificate
+    /// corresponding to the private key, followed by a chain of intermediate certificates to a
+    /// trusted root.
+    pub fn from_files<P, Q>(key: P, certs: Q) -> Result<OpensslServer, ErrorStack>
+        where P: AsRef<Path>,
+              Q: AsRef<Path>
+    {
+        let mut ssl = try!(SslAcceptorBuilder::mozilla_intermediate_raw(SslMethod::tls()));
+        try!(ssl.builder_mut().set_private_key_file(key, X509_FILETYPE_PEM));
+        try!(ssl.builder_mut().set_certificate_chain_file(certs));
+        try!(ssl.builder_mut().check_private_key());
+        Ok(OpensslServer(ssl.build()))
+    }
+}
 
 impl From<SslAcceptor> for OpensslServer {
     fn from(acceptor: SslAcceptor) -> OpensslServer {
@@ -183,9 +191,7 @@ mod test {
     use hyper::{Client, Server};
     use hyper::server::{Request, Response, Fresh};
     use hyper::net::HttpsConnector;
-    use openssl::ssl::{SslMethod, SslAcceptorBuilder, SslConnectorBuilder};
-    use openssl::pkey::PKey;
-    use openssl::x509::X509;
+    use openssl::ssl::{SslMethod, SslConnectorBuilder};
     use std::io::Read;
     use std::mem;
 
@@ -205,19 +211,7 @@ mod test {
 
     #[test]
     fn server() {
-        let cert = include_bytes!("../test/cert.pem");
-        let key = include_bytes!("../test/key.pem");
-
-        let cert = X509::from_pem(cert).unwrap();
-        let key = PKey::private_key_from_pem(key).unwrap();
-
-        let acceptor = SslAcceptorBuilder::mozilla_intermediate(SslMethod::tls(),
-                                                                &key,
-                                                                &cert,
-                                                                None::<X509>)
-            .unwrap()
-            .build();
-        let ssl = OpensslServer::from(acceptor);
+        let ssl = OpensslServer::from_files("test/key.pem", "test/cert.pem").unwrap();
         let server = Server::https("127.0.0.1:0", ssl).unwrap();
 
         let listening = server.handle(|_: Request, resp: Response<Fresh>| {
@@ -227,7 +221,7 @@ mod test {
         mem::forget(listening);
 
         let mut connector = SslConnectorBuilder::new(SslMethod::tls()).unwrap();
-        connector.builder_mut().cert_store_mut().add_cert(cert).unwrap();
+        connector.builder_mut().set_ca_file("test/cert.pem").unwrap();
         let ssl = OpensslClient::from(connector.build());
         let connector = HttpsConnector::new(ssl);
         let client = Client::with_connector(connector);

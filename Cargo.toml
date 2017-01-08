@@ -11,4 +11,7 @@ readme = "README.md"
 [dependencies]
 antidote = "1.0"
 hyper = { version = "0.9", default_features = false }
-openssl = "0.9.2"
+openssl = "0.9.5"
+
+[replace]
+"openssl:0.9.5" = { git = "https://github.com/sfackler/rust-openssl" }
