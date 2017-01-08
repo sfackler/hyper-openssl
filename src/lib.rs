@@ -45,8 +45,6 @@
 //!
 //! use hyper::Server;
 //! use hyper_openssl::OpensslServer;
-//! use std::io::Read;
-//! use std::fs::File;
 //!
 //! fn main() {
 //!     let ssl = OpensslServer::from_files("private_key.pem", "certificate_chain.pem").unwrap();
