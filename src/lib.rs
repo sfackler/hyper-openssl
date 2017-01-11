@@ -1,20 +1,8 @@
-//! Hyper SSL support via modern versions of OpenSSL.
-//!
-//! Hyper's built in OpenSSL support depends on version 0.7 of `openssl`. This crate provides
-//! SSL support using version 0.9 of `openssl`.
+//! Hyper SSL support via OpenSSL.
 //!
 //! # Usage
 //!
-//! Hyper's `ssl` feature is enabled by default, so it must be explicitly turned off in your
-//! Cargo.toml:
-//!
-//! ```toml
-//! [dependencies]
-//! hyper = { version = "0.9", default_features = false }
-//! hyper-openssl = "0.1"
-//! ```
-//!
-//! Then on the client side:
+//! On he client side:
 //!
 //! ```
 //! extern crate hyper;

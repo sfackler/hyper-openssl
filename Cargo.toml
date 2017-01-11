@@ -11,5 +11,5 @@ exclude = ["test/*"]
 
 [dependencies]
 antidote = "1.0"
-hyper = { version = "0.9", default_features = false }
+hyper = "0.10"
 openssl = "0.9.6"
