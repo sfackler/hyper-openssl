@@ -138,7 +138,7 @@ impl<T> SslServer<T> for OpensslServer
 }
 
 /// A Hyper SSL stream.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SslStream<T>(Arc<Mutex<ssl::SslStream<T>>>);
 
 impl<T: Read + Write> Read for SslStream<T> {
