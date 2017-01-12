@@ -2,7 +2,7 @@
 //!
 //! # Usage
 //!
-//! On he client side:
+//! On the client side:
 //!
 //! ```
 //! extern crate hyper;
