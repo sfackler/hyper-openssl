@@ -106,6 +106,8 @@ impl OpensslServer {
     /// should contain a sequence of PEM-formatted certificates, starting with the leaf certificate
     /// corresponding to the private key, followed by a chain of intermediate certificates to a
     /// trusted root.
+    ///
+    /// [mozilla]: https://wiki.mozilla.org/Security/Server_Side_TLS
     pub fn from_files<P, Q>(key: P, certs: Q) -> Result<OpensslServer, ErrorStack>
         where P: AsRef<Path>,
               Q: AsRef<Path>
