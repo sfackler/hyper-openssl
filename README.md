@@ -1,5 +1,5 @@
 # hyper-openssl
-[![Build Status](https://travis-ci.org/sfackler/rust-hyper-openssl.svg?branch=master)](https://travis-ci.org/sfackler/rust-hyper-openssl)
+[![Build Status](https://travis-ci.org/sfackler/hyper-openssl.svg?branch=master)](https://travis-ci.org/sfackler/hyper-openssl)
 
 [Documentation](https://docs.rs/hyper-openssl/0.1.0/hyper_openssl)
 
