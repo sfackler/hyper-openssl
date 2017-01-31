@@ -44,7 +44,7 @@
 
 extern crate antidote;
 extern crate hyper;
-extern crate openssl;
+pub extern crate openssl;
 
 use antidote::Mutex;
 use hyper::net::{SslClient, SslServer, NetworkStream};
