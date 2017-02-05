@@ -61,19 +61,35 @@ use std::time::Duration;
 
 /// An `SslClient` implementation using OpenSSL.
 #[derive(Clone)]
-pub struct OpensslClient(SslConnector);
+pub struct OpensslClient {
+    connector: SslConnector,
+    disable_verification: bool,
+}
 
 impl OpensslClient {
     /// Creates a new `OpenSslClient` with default settings.
     pub fn new() -> Result<OpensslClient, ErrorStack> {
         let connector = try!(SslConnectorBuilder::new(SslMethod::tls())).build();
-        Ok(OpensslClient(connector))
+        Ok(OpensslClient::from(connector))
+    }
+
+    /// If set, the
+    /// `SslConnector::danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication`
+    /// method will be used to connect.
+    ///
+    /// If certificate verification has been disabled in the `SslConnector`, verification must be
+    /// additionally disabled here for that setting to take effect.
+    pub fn danger_disable_hostname_verification(&mut self, disable_verification: bool) {
+        self.disable_verification = disable_verification;
     }
 }
 
 impl From<SslConnector> for OpensslClient {
     fn from(connector: SslConnector) -> OpensslClient {
-        OpensslClient(connector)
+        OpensslClient {
+            connector: connector,
+            disable_verification: false,
+        }
     }
 }
 
@@ -83,7 +99,12 @@ impl<T> SslClient<T> for OpensslClient
     type Stream = SslStream<T>;
 
     fn wrap_client(&self, stream: T, host: &str) -> hyper::Result<SslStream<T>> {
-        match self.0.connect(host, stream) {
+        let stream = if self.disable_verification {
+            self.connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream)
+        } else {
+            self.connector.connect(host, stream)
+        };
+        match stream {
             Ok(stream) => Ok(SslStream(Arc::new(Mutex::new(stream)))),
             Err(err) => Err(hyper::Error::Ssl(Box::new(err))),
         }
