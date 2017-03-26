@@ -50,8 +50,9 @@ use antidote::Mutex;
 use hyper::net::{SslClient, SslServer, NetworkStream};
 use openssl::error::ErrorStack;
 use openssl::ssl::{self, SslMethod, SslConnector, SslConnectorBuilder, SslAcceptor,
-                   SslAcceptorBuilder};
+                   SslAcceptorBuilder, SslSession};
 use openssl::x509::X509_FILETYPE_PEM;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
@@ -59,11 +60,18 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[derive(PartialEq, Eq, Hash)]
+struct SessionKey {
+    host: String,
+    port: u16,
+}
+
 /// An `SslClient` implementation using OpenSSL.
 #[derive(Clone)]
 pub struct OpensslClient {
     connector: SslConnector,
     disable_verification: bool,
+    session_cache: Arc<Mutex<HashMap<SessionKey, SslSession>>>,
 }
 
 impl OpensslClient {
@@ -89,6 +97,7 @@ impl From<SslConnector> for OpensslClient {
         OpensslClient {
             connector: connector,
             disable_verification: false,
+            session_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -98,14 +107,32 @@ impl<T> SslClient<T> for OpensslClient
 {
     type Stream = SslStream<T>;
 
-    fn wrap_client(&self, stream: T, host: &str) -> hyper::Result<SslStream<T>> {
+    fn wrap_client(&self, mut stream: T, host: &str) -> hyper::Result<SslStream<T>> {
+        let mut conf = try!(self.connector.configure().map_err(|e| hyper::Error::Ssl(Box::new(e))));
+        let key = SessionKey {
+            host: host.to_owned(),
+            port: try!(stream.peer_addr()).port(),
+        };
+        if let Some(session) = self.session_cache.lock().get(&key) {
+            unsafe {
+                try!(conf.ssl_mut()
+                    .set_session(session)
+                    .map_err(|e| hyper::Error::Ssl(Box::new(e))));
+            }
+        }
         let stream = if self.disable_verification {
-            self.connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream)
+            conf.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream)
         } else {
-            self.connector.connect(host, stream)
+            conf.connect(host, stream)
         };
         match stream {
-            Ok(stream) => Ok(SslStream(Arc::new(Mutex::new(stream)))),
+            Ok(stream) => {
+                if !stream.ssl().session_reused() {
+                    let session = stream.ssl().session().unwrap().to_owned();
+                    self.session_cache.lock().insert(key, session);
+                }
+                Ok(SslStream(Arc::new(Mutex::new(stream))))
+            }
             Err(err) => Err(hyper::Error::Ssl(Box::new(err))),
         }
     }
@@ -222,9 +249,9 @@ mod test {
         let ssl = OpensslServer::from_files("test/key.pem", "test/cert.pem").unwrap();
         let server = Server::https("127.0.0.1:0", ssl).unwrap();
 
-        let listening = server.handle(|_: Request, resp: Response<Fresh>| {
-            resp.send(b"hello").unwrap()
-        }).unwrap();
+        let listening =
+            server.handle(|_: Request, resp: Response<Fresh>| resp.send(b"hello").unwrap())
+                .unwrap();
         let port = listening.socket.port();
         mem::forget(listening);
 
