@@ -55,7 +55,7 @@ use openssl::x509::X509_FILETYPE_PEM;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{self, Read, Write};
-use std::net::SocketAddr;
+use std::net::{SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -131,7 +131,7 @@ impl<T> SslClient<T> for OpensslClient
                     let session = stream.ssl().session().unwrap().to_owned();
                     self.session_cache.lock().insert(key, session);
                 }
-                Ok(SslStream(Arc::new(Mutex::new(stream))))
+                Ok(SslStream(Arc::new(Mutex::new(InnerStream(stream)))))
             }
             Err(err) => Err(hyper::Error::Ssl(Box::new(err))),
         }
@@ -181,43 +181,52 @@ impl<T> SslServer<T> for OpensslServer
 
     fn wrap_server(&self, stream: T) -> hyper::Result<SslStream<T>> {
         match self.0.accept(stream) {
-            Ok(stream) => Ok(SslStream(Arc::new(Mutex::new(stream)))),
+            Ok(stream) => Ok(SslStream(Arc::new(Mutex::new(InnerStream(stream))))),
             Err(err) => Err(hyper::Error::Ssl(Box::new(err))),
         }
     }
 }
 
+#[derive(Debug)]
+struct InnerStream<T: Read + Write>(ssl::SslStream<T>);
+
+impl<T: Read + Write> Drop for InnerStream<T> {
+    fn drop(&mut self) {
+        let _ = self.0.shutdown();
+    }
+}
+
 /// A Hyper SSL stream.
 #[derive(Debug, Clone)]
-pub struct SslStream<T>(Arc<Mutex<ssl::SslStream<T>>>);
+pub struct SslStream<T: Read + Write>(Arc<Mutex<InnerStream<T>>>);
 
 impl<T: Read + Write> Read for SslStream<T> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.lock().read(buf)
+        self.0.lock().0.read(buf)
     }
 }
 
 impl<T: Read + Write> Write for SslStream<T> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().write(buf)
+        self.0.lock().0.write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.0.lock().flush()
+        self.0.lock().0.flush()
     }
 }
 
 impl<T: NetworkStream> NetworkStream for SslStream<T> {
     fn peer_addr(&mut self) -> io::Result<SocketAddr> {
-        self.0.lock().get_mut().peer_addr()
+        self.0.lock().0.get_mut().peer_addr()
     }
 
     fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.0.lock().get_ref().set_read_timeout(dur)
+        self.0.lock().0.get_ref().set_read_timeout(dur)
     }
 
     fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.0.lock().get_ref().set_write_timeout(dur)
+        self.0.lock().0.get_ref().set_write_timeout(dur)
     }
 }
 
@@ -260,6 +269,14 @@ mod test {
         let ssl = OpensslClient::from(connector.build());
         let connector = HttpsConnector::new(ssl);
         let client = Client::with_connector(connector);
+
+        let mut resp = client.get(&format!("https://localhost:{}", port))
+            .send()
+            .unwrap();
+        let mut body = vec![];
+        resp.read_to_end(&mut body).unwrap();
+        assert_eq!(body, b"hello");
+        drop(resp);
 
         let mut resp = client.get(&format!("https://localhost:{}", port))
             .send()
