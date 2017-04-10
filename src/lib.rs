@@ -55,8 +55,8 @@ use openssl::x509::X509_FILETYPE_PEM;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr};
-use std::ops::Deref;
+use std::net::SocketAddr;
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -214,8 +214,14 @@ impl<T: Read + Write> SslStream<T> {
 impl<'a, T: Read + Write + 'a> Deref for StreamGuard<'a, T> {
     type Target = ssl::SslStream<T>;
 
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &ssl::SslStream<T> {
         &(self.0).0
+    }
+}
+
+impl<'a, T: Read + Write + 'a> DerefMut for StreamGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut ssl::SslStream<T> {
+        &mut (self.0).0
     }
 }
 
@@ -227,17 +233,17 @@ impl<T: Read + Write> Read for SslStream<T> {
 
 impl<T: Read + Write> Write for SslStream<T> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().0.write(buf)
+        self.lock().write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.0.lock().0.flush()
+        self.lock().flush()
     }
 }
 
 impl<T: NetworkStream> NetworkStream for SslStream<T> {
     fn peer_addr(&mut self) -> io::Result<SocketAddr> {
-        self.0.lock().0.get_mut().peer_addr()
+        self.lock().get_mut().peer_addr()
     }
 
     fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
