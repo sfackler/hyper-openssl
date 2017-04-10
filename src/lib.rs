@@ -46,7 +46,7 @@ extern crate antidote;
 extern crate hyper;
 pub extern crate openssl;
 
-use antidote::Mutex;
+use antidote::{Mutex, MutexGuard};
 use hyper::net::{SslClient, SslServer, NetworkStream};
 use openssl::error::ErrorStack;
 use openssl::ssl::{self, SslMethod, SslConnector, SslConnectorBuilder, SslAcceptor,
@@ -56,6 +56,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr};
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -200,6 +201,24 @@ impl<T: Read + Write> Drop for InnerStream<T> {
 #[derive(Debug, Clone)]
 pub struct SslStream<T: Read + Write>(Arc<Mutex<InnerStream<T>>>);
 
+/// A guard around a locked inner SSL stream.
+pub struct StreamGuard<'a, T: Read + Write + 'a>(MutexGuard<'a, InnerStream<T>>);
+
+impl<T: Read + Write> SslStream<T> {
+    /// Returns a guard around the locked inner SSL stream.
+    fn lock(&self) -> StreamGuard<T> {
+        StreamGuard(self.0.lock())
+    }
+}
+
+impl<'a, T: Read + Write + 'a> Deref for StreamGuard<'a, T> {
+    type Target = ssl::SslStream<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &(self.0).0
+    }
+}
+
 impl<T: Read + Write> Read for SslStream<T> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.0.lock().0.read(buf)
@@ -222,11 +241,11 @@ impl<T: NetworkStream> NetworkStream for SslStream<T> {
     }
 
     fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.0.lock().0.get_ref().set_read_timeout(dur)
+        self.lock().get_ref().set_read_timeout(dur)
     }
 
     fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.0.lock().0.get_ref().set_write_timeout(dur)
+        self.lock().get_ref().set_write_timeout(dur)
     }
 }
 
