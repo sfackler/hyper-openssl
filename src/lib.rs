@@ -40,7 +40,7 @@
 //! }
 //! ```
 #![warn(missing_docs)]
-#![doc(html_root_url="https://docs.rs/hyper-openssl/0.2.4")]
+#![doc(html_root_url="https://docs.rs/hyper-openssl/0.2.5")]
 
 extern crate antidote;
 extern crate hyper;
