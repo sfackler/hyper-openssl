@@ -206,7 +206,7 @@ pub struct StreamGuard<'a, T: Read + Write + 'a>(MutexGuard<'a, InnerStream<T>>)
 
 impl<T: Read + Write> SslStream<T> {
     /// Returns a guard around the locked inner SSL stream.
-    fn lock(&self) -> StreamGuard<T> {
+    pub fn lock(&self) -> StreamGuard<T> {
         StreamGuard(self.0.lock())
     }
 }
