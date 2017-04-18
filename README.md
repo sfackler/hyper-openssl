@@ -3,7 +3,7 @@
 
 [Documentation](https://docs.rs/hyper-openssl)
 
-Hyper SSL support via modern versions of openssl.
+Hyper SSL support via rust-openssl.
 
 ## License
 
