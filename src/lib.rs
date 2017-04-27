@@ -132,7 +132,7 @@ impl<T> SslClient<T> for OpensslClient
                     let session = stream.ssl().session().unwrap().to_owned();
                     self.session_cache.lock().insert(key, session);
                 }
-                Ok(SslStream(Arc::new(Mutex::new(InnerStream(stream)))))
+                Ok(SslStream::from(stream))
             }
             Err(err) => Err(hyper::Error::Ssl(Box::new(err))),
         }
@@ -182,7 +182,7 @@ impl<T> SslServer<T> for OpensslServer
 
     fn wrap_server(&self, stream: T) -> hyper::Result<SslStream<T>> {
         match self.0.accept(stream) {
-            Ok(stream) => Ok(SslStream(Arc::new(Mutex::new(InnerStream(stream))))),
+            Ok(stream) => Ok(SslStream::from(stream)),
             Err(err) => Err(hyper::Error::Ssl(Box::new(err))),
         }
     }
@@ -200,6 +200,12 @@ impl<T: Read + Write> Drop for InnerStream<T> {
 /// A Hyper SSL stream.
 #[derive(Debug, Clone)]
 pub struct SslStream<T: Read + Write>(Arc<Mutex<InnerStream<T>>>);
+
+impl<T: Read + Write> From<ssl::SslStream<T>> for SslStream<T> {
+    fn from(stream: ssl::SslStream<T>) -> SslStream<T> {
+        SslStream(Arc::new(Mutex::new(InnerStream(stream))))
+    }
+}
 
 /// A guard around a locked inner SSL stream.
 pub struct StreamGuard<'a, T: Read + Write + 'a>(MutexGuard<'a, InnerStream<T>>);
