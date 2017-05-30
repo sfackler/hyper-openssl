@@ -78,7 +78,7 @@ pub struct OpensslClient {
 impl OpensslClient {
     /// Creates a new `OpenSslClient` with default settings.
     pub fn new() -> Result<OpensslClient, ErrorStack> {
-        let connector = try!(SslConnectorBuilder::new(SslMethod::tls())).build();
+        let connector = SslConnectorBuilder::new(SslMethod::tls())?.build();
         Ok(OpensslClient::from(connector))
     }
 
@@ -109,16 +109,18 @@ impl<T> SslClient<T> for OpensslClient
     type Stream = SslStream<T>;
 
     fn wrap_client(&self, mut stream: T, host: &str) -> hyper::Result<SslStream<T>> {
-        let mut conf = try!(self.connector.configure().map_err(|e| hyper::Error::Ssl(Box::new(e))));
+        let mut conf = self.connector
+            .configure()
+            .map_err(|e| hyper::Error::Ssl(Box::new(e)))?;
         let key = SessionKey {
             host: host.to_owned(),
-            port: try!(stream.peer_addr()).port(),
+            port: stream.peer_addr()?.port(),
         };
         if let Some(session) = self.session_cache.lock().get(&key) {
             unsafe {
-                try!(conf.ssl_mut()
+                conf.ssl_mut()
                     .set_session(session)
-                    .map_err(|e| hyper::Error::Ssl(Box::new(e))));
+                    .map_err(|e| hyper::Error::Ssl(Box::new(e)))?;
             }
         }
         let stream = if self.disable_verification {
@@ -161,10 +163,11 @@ impl OpensslServer {
         where P: AsRef<Path>,
               Q: AsRef<Path>
     {
-        let mut ssl = try!(SslAcceptorBuilder::mozilla_intermediate_raw(SslMethod::tls()));
-        try!(ssl.builder_mut().set_private_key_file(key, X509_FILETYPE_PEM));
-        try!(ssl.builder_mut().set_certificate_chain_file(certs));
-        try!(ssl.builder_mut().check_private_key());
+        let mut ssl = SslAcceptorBuilder::mozilla_intermediate_raw(SslMethod::tls())?;
+        ssl.builder_mut()
+            .set_private_key_file(key, X509_FILETYPE_PEM)?;
+        ssl.builder_mut().set_certificate_chain_file(certs)?;
+        ssl.builder_mut().check_private_key()?;
         Ok(OpensslServer(ssl.build()))
     }
 }
@@ -289,19 +292,23 @@ mod test {
         let ssl = OpensslServer::from_files("test/key.pem", "test/cert.pem").unwrap();
         let server = Server::https("127.0.0.1:0", ssl).unwrap();
 
-        let listening =
-            server.handle(|_: Request, resp: Response<Fresh>| resp.send(b"hello").unwrap())
-                .unwrap();
+        let listening = server
+            .handle(|_: Request, resp: Response<Fresh>| resp.send(b"hello").unwrap())
+            .unwrap();
         let port = listening.socket.port();
         mem::forget(listening);
 
         let mut connector = SslConnectorBuilder::new(SslMethod::tls()).unwrap();
-        connector.builder_mut().set_ca_file("test/cert.pem").unwrap();
+        connector
+            .builder_mut()
+            .set_ca_file("test/cert.pem")
+            .unwrap();
         let ssl = OpensslClient::from(connector.build());
         let connector = HttpsConnector::new(ssl);
         let client = Client::with_connector(connector);
 
-        let mut resp = client.get(&format!("https://localhost:{}", port))
+        let mut resp = client
+            .get(&format!("https://localhost:{}", port))
             .send()
             .unwrap();
         let mut body = vec![];
@@ -309,7 +316,8 @@ mod test {
         assert_eq!(body, b"hello");
         drop(resp);
 
-        let mut resp = client.get(&format!("https://localhost:{}", port))
+        let mut resp = client
+            .get(&format!("https://localhost:{}", port))
             .send()
             .unwrap();
         let mut body = vec![];
