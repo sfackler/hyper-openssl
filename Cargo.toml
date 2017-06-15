@@ -10,6 +10,11 @@ readme = "README.md"
 exclude = ["test/*"]
 
 [dependencies]
-antidote = "1.0"
-hyper = "0.10"
+antidote = "1.0.0"
+hyper = "0.11.0"
 openssl = "0.9.10"
+tokio-core = "0.1.8"
+tokio-io = "0.1.2"
+tokio-openssl = { git = "https://github.com/sfackler/tokio-openssl", branch = "patch" }
+tokio-service = "0.1.0"
+futures = "0.1.14"
