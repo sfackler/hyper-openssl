@@ -73,7 +73,7 @@ pub struct OpensslClient {
     connector: SslConnector,
     disable_verification: bool,
     session_cache: Arc<Mutex<HashMap<SessionKey, SslSession>>>,
-    ssl_callback: Option<Arc<Fn(&mut SslRef) -> Result<(), ErrorStack> + Sync + Send>>,
+    ssl_callback: Option<Arc<Fn(&mut SslRef, &str) -> Result<(), ErrorStack> + Sync + Send>>,
 }
 
 impl OpensslClient {
@@ -94,8 +94,10 @@ impl OpensslClient {
     }
 
     /// Registers a callback which can customize the `Ssl` of each connection.
+    ///
+    /// It is provided with a reference to the `SslRef` as well as the host.
     pub fn ssl_callback<F>(&mut self, callback: F)
-        where F: Fn(&mut SslRef) -> Result<(), ErrorStack> + 'static + Sync + Send
+        where F: Fn(&mut SslRef, &str) -> Result<(), ErrorStack> + 'static + Sync + Send
     {
         self.ssl_callback = Some(Arc::new(callback));
     }
@@ -122,7 +124,7 @@ impl<T> SslClient<T> for OpensslClient
             .configure()
             .map_err(|e| hyper::Error::Ssl(Box::new(e)))?;
         if let Some(ref callback) = self.ssl_callback {
-            callback(conf.ssl_mut())
+            callback(conf.ssl_mut(), host)
                 .map_err(|e| hyper::Error::Ssl(Box::new(e)))?;
         }
         let key = SessionKey {
