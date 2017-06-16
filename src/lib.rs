@@ -7,59 +7,50 @@
 //! ```
 //! extern crate hyper;
 //! extern crate hyper_openssl;
+//! extern crate tokio_core;
 //!
 //! use hyper::Client;
-//! use hyper::net::HttpsConnector;
-//! use hyper_openssl::OpensslClient;
-//! use std::io::Read;
+//! use hyper_openssl::HttpsConnector;
+//! use tokio_core::reactor::Core;
 //!
 //! fn main() {
-//!     let ssl = OpensslClient::new().unwrap();
-//!     let connector = HttpsConnector::new(ssl);
-//!     let client = Client::with_connector(connector);
+//!     let mut core = Core::new().unwrap();
 //!
-//!     let mut resp = client.get("https://google.com").send().unwrap();
-//!     let mut body = vec![];
-//!     resp.read_to_end(&mut body).unwrap();
-//!     println!("{}", String::from_utf8_lossy(&body));
-//! }
-//! ```
+//!     let client = Client::configure()
+//!         .connector(HttpsConnector::new(4, &core.handle()).unwrap())
+//!         .build(&core.handle());
 //!
-//! Or on the server side:
-//!
-//! ```no_run
-//! extern crate hyper;
-//! extern crate hyper_openssl;
-//!
-//! use hyper::Server;
-//! use hyper_openssl::OpensslServer;
-//!
-//! fn main() {
-//!     let ssl = OpensslServer::from_files("private_key.pem", "certificate_chain.pem").unwrap();
-//!     let server = Server::https("0.0.0.0:8443", ssl).unwrap();
+//!     let res = core.run(client.get("https://hyper.rs".parse().unwrap())).unwrap();
+//!     assert!(res.status().is_success());
 //! }
 //! ```
 #![warn(missing_docs)]
 #![doc(html_root_url="https://docs.rs/hyper-openssl/0.2.7")]
 
 extern crate antidote;
+extern crate futures;
 extern crate hyper;
+extern crate tokio_core;
+extern crate tokio_io;
+extern crate tokio_openssl;
+extern crate tokio_service;
 pub extern crate openssl;
 
-use antidote::{Mutex, MutexGuard};
-use hyper::net::{SslClient, SslServer, NetworkStream};
+use antidote::Mutex;
+use futures::{Future, Poll};
+use futures::future;
+use hyper::Uri;
+use hyper::client::{Connect, HttpConnector};
+use openssl::ssl::{SslMethod, SslConnector, SslConnectorBuilder, SslSession, SslRef};
 use openssl::error::ErrorStack;
-use openssl::ssl::{self, SslMethod, SslConnector, SslConnectorBuilder, SslAcceptor,
-                   SslAcceptorBuilder, SslSession, SslRef};
-use openssl::x509::X509_FILETYPE_PEM;
 use std::collections::HashMap;
-use std::fmt::Debug;
-use std::io::{self, Read, Write};
-use std::net::SocketAddr;
-use std::ops::{Deref, DerefMut};
-use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::marker::PhantomData;
+use std::io::{self, Read, Write};
+use tokio_core::reactor::Handle;
+use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_openssl::{ConnectConfigurationExt, SslStream};
+use tokio_service::Service;
 
 #[derive(PartialEq, Eq, Hash)]
 struct SessionKey {
@@ -67,20 +58,114 @@ struct SessionKey {
     port: u16,
 }
 
-/// An `SslClient` implementation using OpenSSL.
 #[derive(Clone)]
-pub struct OpensslClient {
-    connector: SslConnector,
+struct Inner {
+    ssl: SslConnector,
     disable_verification: bool,
     session_cache: Arc<Mutex<HashMap<SessionKey, SslSession>>>,
-    ssl_callback: Option<Arc<Fn(&mut SslRef, &str) -> Result<(), ErrorStack> + Sync + Send>>,
+    ssl_callback: Option<Arc<Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Sync + Send>>,
 }
 
-impl OpensslClient {
-    /// Creates a new `OpenSslClient` with default settings.
-    pub fn new() -> Result<OpensslClient, ErrorStack> {
-        let connector = SslConnectorBuilder::new(SslMethod::tls())?.build();
-        Ok(OpensslClient::from(connector))
+impl Inner {
+    fn connect<S>(
+        self,
+        uri: Uri,
+        stream: S,
+    ) -> Box<Future<Item = MaybeHttpsStream<S>, Error = io::Error>>
+    where
+        S: 'static + AsyncRead + AsyncWrite,
+    {
+        let host = match uri.host() {
+            Some(host) => host,
+            None => {
+                return Box::new(future::err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "invalid url, missing host",
+                )))
+            }
+        };
+
+        let mut conf = match self.ssl.configure() {
+            Ok(conf) => conf,
+            Err(e) => return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e))),
+        };
+
+        if let Some(ref callback) = self.ssl_callback {
+            if let Err(e) = callback(conf.ssl_mut(), &uri) {
+                return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e)));
+            }
+        }
+
+        let key = SessionKey {
+            host: host.to_owned(),
+            port: uri.port().unwrap_or(443),
+        };
+        if let Some(session) = self.session_cache.lock().get(&key) {
+            if let Err(e) = unsafe { conf.ssl_mut().set_session(session) } {
+                return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e)));
+            }
+        }
+
+        let f = if self.disable_verification {
+            conf.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication_async(stream)
+        } else {
+            conf.connect_async(host, stream)
+        };
+
+        let f = f.map(move |s| {
+            if !s.get_ref().ssl().session_reused() {
+                self.session_cache.lock().insert(
+                    key,
+                    s.get_ref()
+                        .ssl()
+                        .session()
+                        .expect("BUG")
+                        .to_owned(),
+                );
+            }
+            MaybeHttpsStream::Https(s)
+        }).map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+
+        Box::new(f)
+    }
+}
+
+/// An Connector using OpenSSL to support `http` and `https` schemes.
+#[derive(Clone)]
+pub struct HttpsConnector<T> {
+    http: T,
+    inner: Inner,
+}
+
+impl HttpsConnector<HttpConnector> {
+    /// Creates a new `HttpsConnector` with default settings and using the
+    /// standard Hyper `HttpConnector`.
+    pub fn new(
+        threads: usize,
+        handle: &Handle,
+    ) -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
+        let mut http = HttpConnector::new(threads, handle);
+        http.enforce_http(false);
+        let ssl = SslConnectorBuilder::new(SslMethod::tls())?.build();
+        Ok(HttpsConnector::with_connector(http, ssl))
+    }
+}
+
+impl<T> HttpsConnector<T>
+where
+    T: Connect,
+{
+    /// Creates a new `HttpsConnector`.
+    pub fn with_connector(http: T, ssl: SslConnector) -> HttpsConnector<T> {
+        HttpsConnector {
+            http,
+            inner: Inner {
+                ssl,
+                disable_verification: false,
+                session_cache: Arc::new(Mutex::new(HashMap::new())),
+                ssl_callback: None,
+            },
+        }
     }
 
     /// If set, the
@@ -90,253 +175,155 @@ impl OpensslClient {
     /// If certificate verification has been disabled in the `SslConnector`, verification must be
     /// additionally disabled here for that setting to take effect.
     pub fn danger_disable_hostname_verification(&mut self, disable_verification: bool) {
-        self.disable_verification = disable_verification;
+        self.inner.disable_verification = disable_verification;
     }
 
     /// Registers a callback which can customize the `Ssl` of each connection.
     ///
-    /// It is provided with a reference to the `SslRef` as well as the host.
+    /// It is provided with a reference to the `SslRef` as well as the URI.
     pub fn ssl_callback<F>(&mut self, callback: F)
-        where F: Fn(&mut SslRef, &str) -> Result<(), ErrorStack> + 'static + Sync + Send
+        where F: Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send
     {
-        self.ssl_callback = Some(Arc::new(callback));
+        self.inner.ssl_callback = Some(Arc::new(callback));
     }
 }
 
-impl From<SslConnector> for OpensslClient {
-    fn from(connector: SslConnector) -> OpensslClient {
-        OpensslClient {
-            connector: connector,
-            disable_verification: false,
-            session_cache: Arc::new(Mutex::new(HashMap::new())),
-            ssl_callback: None,
-        }
-    }
-}
-
-impl<T> SslClient<T> for OpensslClient
-    where T: NetworkStream + Clone + Sync + Send + Debug
+impl<T> Service for HttpsConnector<T>
+where
+    T: Connect,
 {
-    type Stream = SslStream<T>;
+    type Request = Uri;
+    type Response = MaybeHttpsStream<T::Output>;
+    type Error = io::Error;
+    type Future = ConnectFuture<T>;
 
-    fn wrap_client(&self, mut stream: T, host: &str) -> hyper::Result<SslStream<T>> {
-        let mut conf = self.connector
-            .configure()
-            .map_err(|e| hyper::Error::Ssl(Box::new(e)))?;
-        if let Some(ref callback) = self.ssl_callback {
-            callback(conf.ssl_mut(), host)
-                .map_err(|e| hyper::Error::Ssl(Box::new(e)))?;
-        }
-        let key = SessionKey {
-            host: host.to_owned(),
-            port: stream.peer_addr()?.port(),
-        };
-        if let Some(session) = self.session_cache.lock().get(&key) {
-            unsafe {
-                conf.ssl_mut()
-                    .set_session(session)
-                    .map_err(|e| hyper::Error::Ssl(Box::new(e)))?;
-            }
-        }
-        let stream = if self.disable_verification {
-            conf.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(stream)
+    fn call(&self, uri: Uri) -> ConnectFuture<T> {
+        let f = self.http.connect(uri.clone());
+
+        let f = if uri.scheme() == Some("https") {
+            let inner = self.inner.clone();
+            Box::new(f.and_then(move |s| inner.connect(uri, s))) as Box<_>
         } else {
-            conf.connect(host, stream)
+            Box::new(f.map(|s| MaybeHttpsStream::Http(s))) as Box<_>
         };
-        match stream {
-            Ok(stream) => {
-                if !stream.ssl().session_reused() {
-                    let session = stream.ssl().session().unwrap().to_owned();
-                    self.session_cache.lock().insert(key, session);
-                }
-                Ok(SslStream::from(stream))
-            }
-            Err(err) => Err(hyper::Error::Ssl(Box::new(err))),
+
+        ConnectFuture {
+            f: f,
+            _p: PhantomData,
         }
     }
 }
 
-/// An `SslServer` implementation using OpenSSL.
-#[derive(Clone)]
-pub struct OpensslServer(SslAcceptor);
-
-impl OpensslServer {
-    /// Constructs an `OpensslServer` with a reasonable default configuration.
-    ///
-    /// This currently corresponds to the Intermediate profile of the
-    /// [Mozilla Server Side TLS recommendations][mozilla], but is subject to change. It should be
-    /// compatible with everything but the very oldest clients (notably Internet Explorer 6 on
-    /// Windows XP and Java 6).
-    ///
-    /// The `key` file should contain the server's PEM-formatted private key, and the `certs` file
-    /// should contain a sequence of PEM-formatted certificates, starting with the leaf certificate
-    /// corresponding to the private key, followed by a chain of intermediate certificates to a
-    /// trusted root.
-    ///
-    /// [mozilla]: https://wiki.mozilla.org/Security/Server_Side_TLS
-    pub fn from_files<P, Q>(key: P, certs: Q) -> Result<OpensslServer, ErrorStack>
-        where P: AsRef<Path>,
-              Q: AsRef<Path>
-    {
-        let mut ssl = SslAcceptorBuilder::mozilla_intermediate_raw(SslMethod::tls())?;
-        ssl.builder_mut()
-            .set_private_key_file(key, X509_FILETYPE_PEM)?;
-        ssl.builder_mut().set_certificate_chain_file(certs)?;
-        ssl.builder_mut().check_private_key()?;
-        Ok(OpensslServer(ssl.build()))
-    }
-}
-
-impl From<SslAcceptor> for OpensslServer {
-    fn from(acceptor: SslAcceptor) -> OpensslServer {
-        OpensslServer(acceptor)
-    }
-}
-
-impl<T> SslServer<T> for OpensslServer
-    where T: NetworkStream + Clone + Sync + Send + Debug
+/// A future connecting to a remote HTTP server.
+pub struct ConnectFuture<T>
+where
+    T: Connect,
 {
-    type Stream = SslStream<T>;
+    f: Box<Future<Item = MaybeHttpsStream<T::Output>, Error = io::Error>>,
+    _p: PhantomData<T>,
+}
 
-    fn wrap_server(&self, stream: T) -> hyper::Result<SslStream<T>> {
-        match self.0.accept(stream) {
-            Ok(stream) => Ok(SslStream::from(stream)),
-            Err(err) => Err(hyper::Error::Ssl(Box::new(err))),
+impl<T> Future for ConnectFuture<T>
+where
+    T: Connect,
+{
+    type Item = MaybeHttpsStream<T::Output>;
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<MaybeHttpsStream<T::Output>, io::Error> {
+        self.f.poll()
+    }
+}
+
+/// A stream which may be wrapped with SSL.
+pub enum MaybeHttpsStream<T> {
+    /// A raw HTTP stream.
+    Http(T),
+    /// An SSL-wrapped HTTP stream.
+    Https(SslStream<T>),
+}
+
+impl<T> Read for MaybeHttpsStream<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match *self {
+            MaybeHttpsStream::Http(ref mut s) => s.read(buf),
+            MaybeHttpsStream::Https(ref mut s) => s.read(buf),
         }
     }
 }
 
-#[derive(Debug)]
-struct InnerStream<T: Read + Write>(ssl::SslStream<T>);
-
-impl<T: Read + Write> Drop for InnerStream<T> {
-    fn drop(&mut self) {
-        let _ = self.0.shutdown();
+impl<T> AsyncRead for MaybeHttpsStream<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
+        match *self {
+            MaybeHttpsStream::Http(ref s) => s.prepare_uninitialized_buffer(buf),
+            MaybeHttpsStream::Https(ref s) => s.prepare_uninitialized_buffer(buf),
+        }
     }
 }
 
-/// A Hyper SSL stream.
-#[derive(Debug, Clone)]
-pub struct SslStream<T: Read + Write>(Arc<Mutex<InnerStream<T>>>);
-
-impl<T: Read + Write> From<ssl::SslStream<T>> for SslStream<T> {
-    fn from(stream: ssl::SslStream<T>) -> SslStream<T> {
-        SslStream(Arc::new(Mutex::new(InnerStream(stream))))
-    }
-}
-
-/// A guard around a locked inner SSL stream.
-pub struct StreamGuard<'a, T: Read + Write + 'a>(MutexGuard<'a, InnerStream<T>>);
-
-impl<T: Read + Write> SslStream<T> {
-    /// Returns a guard around the locked inner SSL stream.
-    pub fn lock(&self) -> StreamGuard<T> {
-        StreamGuard(self.0.lock())
-    }
-}
-
-impl<'a, T: Read + Write + 'a> Deref for StreamGuard<'a, T> {
-    type Target = ssl::SslStream<T>;
-
-    fn deref(&self) -> &ssl::SslStream<T> {
-        &(self.0).0
-    }
-}
-
-impl<'a, T: Read + Write + 'a> DerefMut for StreamGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut ssl::SslStream<T> {
-        &mut (self.0).0
-    }
-}
-
-impl<T: Read + Write> Read for SslStream<T> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.lock().0.read(buf)
-    }
-}
-
-impl<T: Read + Write> Write for SslStream<T> {
+impl<T> Write for MaybeHttpsStream<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.lock().write(buf)
+        match *self {
+            MaybeHttpsStream::Http(ref mut s) => s.write(buf),
+            MaybeHttpsStream::Https(ref mut s) => s.write(buf),
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.lock().flush()
+        match *self {
+            MaybeHttpsStream::Http(ref mut s) => s.flush(),
+            MaybeHttpsStream::Https(ref mut s) => s.flush(),
+        }
     }
 }
 
-impl<T: NetworkStream> NetworkStream for SslStream<T> {
-    fn peer_addr(&mut self) -> io::Result<SocketAddr> {
-        self.lock().get_mut().peer_addr()
-    }
-
-    fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.lock().get_ref().set_read_timeout(dur)
-    }
-
-    fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.lock().get_ref().set_write_timeout(dur)
+impl<T> AsyncWrite for MaybeHttpsStream<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        match *self {
+            MaybeHttpsStream::Http(ref mut s) => s.shutdown(),
+            MaybeHttpsStream::Https(ref mut s) => s.shutdown(),
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use hyper::{Client, Server};
-    use hyper::server::{Request, Response, Fresh};
-    use hyper::net::HttpsConnector;
-    use openssl::ssl::{SslMethod, SslConnectorBuilder};
-    use std::io::Read;
-    use std::mem;
+    use futures::stream::Stream;
+    use hyper::Client;
+    use tokio_core::reactor::Core;
 
-    use {OpensslClient, OpensslServer};
+    use super::*;
 
     #[test]
     fn google() {
-        let ssl = OpensslClient::new().unwrap();
-        let connector = HttpsConnector::new(ssl);
-        let client = Client::with_connector(connector);
+        let mut core = Core::new().unwrap();
+        let handle = core.handle();
 
-        let mut resp = client.get("https://google.com").send().unwrap();
-        assert!(resp.status.is_success());
-        let mut body = vec![];
-        resp.read_to_end(&mut body).unwrap();
-    }
+        let ssl = HttpsConnector::new(1, &handle).unwrap();
+        let client = Client::configure().connector(ssl).build(&handle);
 
-    #[test]
-    fn server() {
-        let ssl = OpensslServer::from_files("test/key.pem", "test/cert.pem").unwrap();
-        let server = Server::https("127.0.0.1:0", ssl).unwrap();
-
-        let listening = server
-            .handle(|_: Request, resp: Response<Fresh>| resp.send(b"hello").unwrap())
-            .unwrap();
-        let port = listening.socket.port();
-        mem::forget(listening);
-
-        let mut connector = SslConnectorBuilder::new(SslMethod::tls()).unwrap();
-        connector
-            .builder_mut()
-            .set_ca_file("test/cert.pem")
-            .unwrap();
-        let ssl = OpensslClient::from(connector.build());
-        let connector = HttpsConnector::new(ssl);
-        let client = Client::with_connector(connector);
-
-        let mut resp = client
-            .get(&format!("https://localhost:{}", port))
-            .send()
-            .unwrap();
-        let mut body = vec![];
-        resp.read_to_end(&mut body).unwrap();
-        assert_eq!(body, b"hello");
-        drop(resp);
-
-        let mut resp = client
-            .get(&format!("https://localhost:{}", port))
-            .send()
-            .unwrap();
-        let mut body = vec![];
-        resp.read_to_end(&mut body).unwrap();
-        assert_eq!(body, b"hello");
+        let f = client.get("https://www.google.com".parse().unwrap()).and_then(
+            |resp| {
+                assert!(resp.status().is_success(), "{}", resp.status());
+                resp.body().fold(vec![], |mut buf, chunk| {
+                    buf.extend_from_slice(&chunk);
+                    Ok::<_, hyper::Error>(buf)
+                })
+            },
+        );
+        let body = core.run(f).unwrap();
+        println!("{}", String::from_utf8_lossy(&body));
     }
 }
