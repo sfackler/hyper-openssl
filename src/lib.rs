@@ -50,7 +50,7 @@ use antidote::{Mutex, MutexGuard};
 use hyper::net::{SslClient, SslServer, NetworkStream};
 use openssl::error::ErrorStack;
 use openssl::ssl::{self, SslMethod, SslConnector, SslConnectorBuilder, SslAcceptor,
-                   SslAcceptorBuilder, SslSession};
+                   SslAcceptorBuilder, SslSession, SslRef};
 use openssl::x509::X509_FILETYPE_PEM;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -73,6 +73,7 @@ pub struct OpensslClient {
     connector: SslConnector,
     disable_verification: bool,
     session_cache: Arc<Mutex<HashMap<SessionKey, SslSession>>>,
+    ssl_callback: Option<Arc<Fn(&mut SslRef, &str) -> Result<(), ErrorStack> + Sync + Send>>,
 }
 
 impl OpensslClient {
@@ -91,6 +92,15 @@ impl OpensslClient {
     pub fn danger_disable_hostname_verification(&mut self, disable_verification: bool) {
         self.disable_verification = disable_verification;
     }
+
+    /// Registers a callback which can customize the `Ssl` of each connection.
+    ///
+    /// It is provided with a reference to the `SslRef` as well as the host.
+    pub fn ssl_callback<F>(&mut self, callback: F)
+        where F: Fn(&mut SslRef, &str) -> Result<(), ErrorStack> + 'static + Sync + Send
+    {
+        self.ssl_callback = Some(Arc::new(callback));
+    }
 }
 
 impl From<SslConnector> for OpensslClient {
@@ -99,6 +109,7 @@ impl From<SslConnector> for OpensslClient {
             connector: connector,
             disable_verification: false,
             session_cache: Arc::new(Mutex::new(HashMap::new())),
+            ssl_callback: None,
         }
     }
 }
@@ -112,6 +123,10 @@ impl<T> SslClient<T> for OpensslClient
         let mut conf = self.connector
             .configure()
             .map_err(|e| hyper::Error::Ssl(Box::new(e)))?;
+        if let Some(ref callback) = self.ssl_callback {
+            callback(conf.ssl_mut(), host)
+                .map_err(|e| hyper::Error::Ssl(Box::new(e)))?;
+        }
         let key = SessionKey {
             host: host.to_owned(),
             port: stream.peer_addr()?.port(),
