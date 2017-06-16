@@ -25,7 +25,7 @@
 //! }
 //! ```
 #![warn(missing_docs)]
-#![doc(html_root_url="https://docs.rs/hyper-openssl/0.2.7")]
+#![doc(html_root_url="https://docs.rs/hyper-openssl/0.3.0")]
 
 extern crate antidote;
 extern crate futures;
