@@ -1,5 +1,5 @@
 # hyper-openssl
-[![Build Status](https://travis-ci.org/sfackler/hyper-openssl.svg?branch=master)](https://travis-ci.org/sfackler/hyper-openssl)
+[![CircleCI](https://circleci.com/gh/sfackler/hyper-openssl.svg?style=shield)](https://circleci.com/gh/sfackler/hyper-openssl)
 
 [Documentation](https://docs.rs/hyper-openssl)
 
