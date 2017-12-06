@@ -91,7 +91,7 @@ impl Inner {
         };
 
         if let Some(ref callback) = self.ssl_callback {
-            if let Err(e) = callback(conf.ssl_mut(), &uri) {
+            if let Err(e) = callback(&mut conf, &uri) {
                 return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e)));
             }
         }
@@ -101,7 +101,7 @@ impl Inner {
             port: uri.port().unwrap_or(443),
         };
         if let Some(session) = self.session_cache.lock().get(&key) {
-            if let Err(e) = unsafe { conf.ssl_mut().set_session(session) } {
+            if let Err(e) = unsafe { conf.set_session(session) } {
                 return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e)));
             }
         }
