@@ -1,11 +1,10 @@
 [package]
 name = "hyper-openssl"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Steven Fackler <sfackler@gmail.com>"]
 description = "Hyper SSL support via OpenSSL"
 license = "MIT/Apache-2.0"
 repository = "https://github.com/sfackler/hyper-openssl"
-documentation = "https://docs.rs/hyper-openssl/0.3.0/hyper_openssl"
 readme = "README.md"
 exclude = ["test/*"]
 
