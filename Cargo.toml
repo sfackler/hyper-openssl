@@ -6,7 +6,6 @@ description = "Hyper SSL support via OpenSSL"
 license = "MIT/Apache-2.0"
 repository = "https://github.com/sfackler/hyper-openssl"
 readme = "README.md"
-exclude = ["test/*"]
 
 [dependencies]
 antidote = "1.0.0"
