@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [v0.4.1] - 2018-01-11
+
+### Changed
+
+* Stopped enabling default features for `hyper`.
+
 ## [v0.4.0] - 2018-01-11
 
 ### Removed
@@ -19,6 +25,7 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.4.0...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.4.1...master
+[v0.4.1]: https://github.com/sfackler/hyper-openssl/compare/0.4.0...0.4.1
 [v0.4.0]: https://github.com/sfackler/hyper-openssl/compare/0.3.1...0.4.0
 [release tags]: https://github.com/sfackler/hyper-openssl/releases
