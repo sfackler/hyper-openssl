@@ -25,7 +25,7 @@
 //! }
 //! ```
 #![warn(missing_docs)]
-#![doc(html_root_url="https://docs.rs/hyper-openssl/0.3")]
+#![doc(html_root_url = "https://docs.rs/hyper-openssl/0.3")]
 
 extern crate antidote;
 extern crate futures;
@@ -41,7 +41,7 @@ use futures::{Future, Poll};
 use futures::future;
 use hyper::Uri;
 use hyper::client::{Connect, HttpConnector};
-use openssl::ssl::{SslMethod, SslConnector, SslConnectorBuilder, SslSession, SslRef};
+use openssl::ssl::{ConnectConfiguration, SslConnector, SslMethod, SslSession};
 use openssl::error::ErrorStack;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -61,9 +61,9 @@ struct SessionKey {
 #[derive(Clone)]
 struct Inner {
     ssl: SslConnector,
-    disable_verification: bool,
     session_cache: Arc<Mutex<HashMap<SessionKey, SslSession>>>,
-    ssl_callback: Option<Arc<Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Sync + Send>>,
+    callback:
+        Option<Arc<Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send>>,
 }
 
 impl Inner {
@@ -90,7 +90,7 @@ impl Inner {
             Err(e) => return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e))),
         };
 
-        if let Some(ref callback) = self.ssl_callback {
+        if let Some(ref callback) = self.callback {
             if let Err(e) = callback(&mut conf, &uri) {
                 return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e)));
             }
@@ -106,25 +106,16 @@ impl Inner {
             }
         }
 
-        let f = if self.disable_verification {
-            conf.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication_async(stream)
-        } else {
-            conf.connect_async(host, stream)
-        };
-
-        let f = f.map(move |s| {
-            if !s.get_ref().ssl().session_reused() {
-                self.session_cache.lock().insert(
-                    key,
-                    s.get_ref()
-                        .ssl()
-                        .session()
-                        .expect("BUG")
-                        .to_owned(),
-                );
-            }
-            MaybeHttpsStream::Https(s)
-        }).map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+        let f = conf.connect_async(host, stream)
+            .map(move |s| {
+                if !s.get_ref().ssl().session_reused() {
+                    self.session_cache
+                        .lock()
+                        .insert(key, s.get_ref().ssl().session().expect("BUG").to_owned());
+                }
+                MaybeHttpsStream::Https(s)
+            })
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
 
         Box::new(f)
     }
@@ -146,7 +137,7 @@ impl HttpsConnector<HttpConnector> {
     ) -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
         let mut http = HttpConnector::new(threads, handle);
         http.enforce_http(false);
-        let ssl = SslConnectorBuilder::new(SslMethod::tls())?.build();
+        let ssl = SslConnector::builder(SslMethod::tls())?.build();
         Ok(HttpsConnector::with_connector(http, ssl))
     }
 }
@@ -161,30 +152,20 @@ where
             http,
             inner: Inner {
                 ssl,
-                disable_verification: false,
                 session_cache: Arc::new(Mutex::new(HashMap::new())),
-                ssl_callback: None,
+                callback: None,
             },
         }
     }
 
-    /// If set, the
-    /// `SslConnector::danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication`
-    /// method will be used to connect.
+    /// Registers a callback which can customize the configuration of each connection.
     ///
-    /// If certificate verification has been disabled in the `SslConnector`, verification must be
-    /// additionally disabled here for that setting to take effect.
-    pub fn danger_disable_hostname_verification(&mut self, disable_verification: bool) {
-        self.inner.disable_verification = disable_verification;
-    }
-
-    /// Registers a callback which can customize the `Ssl` of each connection.
-    ///
-    /// It is provided with a reference to the `SslRef` as well as the URI.
-    pub fn ssl_callback<F>(&mut self, callback: F)
-        where F: Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send
+    /// It is provided with a reference to the `ConnectConfiguration` as well as the URI.
+    pub fn set_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send,
     {
-        self.inner.ssl_callback = Some(Arc::new(callback));
+        self.inner.callback = Some(Arc::new(callback));
     }
 }
 
@@ -314,15 +295,15 @@ mod test {
         let ssl = HttpsConnector::new(1, &handle).unwrap();
         let client = Client::configure().connector(ssl).build(&handle);
 
-        let f = client.get("https://www.google.com".parse().unwrap()).and_then(
-            |resp| {
+        let f = client
+            .get("https://www.google.com".parse().unwrap())
+            .and_then(|resp| {
                 assert!(resp.status().is_success(), "{}", resp.status());
                 resp.body().fold(vec![], |mut buf, chunk| {
                     buf.extend_from_slice(&chunk);
                     Ok::<_, hyper::Error>(buf)
                 })
-            },
-        );
+            });
         let body = core.run(f).unwrap();
         println!("{}", String::from_utf8_lossy(&body));
     }
