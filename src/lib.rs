@@ -30,38 +30,46 @@
 extern crate antidote;
 extern crate futures;
 extern crate hyper;
+extern crate linked_hash_set;
+pub extern crate openssl;
 extern crate tokio_core;
 extern crate tokio_io;
 extern crate tokio_openssl;
 extern crate tokio_service;
-pub extern crate openssl;
+
+#[macro_use]
+extern crate lazy_static;
 
 use antidote::Mutex;
 use futures::{Future, Poll};
 use futures::future;
-use hyper::Uri;
 use hyper::client::{Connect, HttpConnector};
-use openssl::ssl::{ConnectConfiguration, SslConnector, SslMethod, SslSession};
+use hyper::Uri;
 use openssl::error::ErrorStack;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::marker::PhantomData;
+use openssl::ex_data::Index;
+use openssl::ssl::{ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod,
+                   SslSessionCacheMode};
 use std::io::{self, Read, Write};
+use std::marker::PhantomData;
+use std::sync::Arc;
 use tokio_core::reactor::Handle;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_openssl::{ConnectConfigurationExt, SslStream};
 use tokio_service::Service;
 
-#[derive(PartialEq, Eq, Hash)]
-struct SessionKey {
-    host: String,
-    port: u16,
+use cache::{SessionCache, SessionKey};
+
+mod cache;
+
+lazy_static! {
+    // The unwrap here isn't great but this only fails on OOM
+    static ref KEY_INDEX: Index<Ssl, SessionKey> = Ssl::new_ex_index().unwrap();
 }
 
 #[derive(Clone)]
 struct Inner {
     ssl: SslConnector,
-    session_cache: Arc<Mutex<HashMap<SessionKey, SslSession>>>,
+    session_cache: Arc<Mutex<SessionCache>>,
     callback:
         Option<Arc<Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send>>,
 }
@@ -100,21 +108,17 @@ impl Inner {
             host: host.to_owned(),
             port: uri.port().unwrap_or(443),
         };
+
         if let Some(session) = self.session_cache.lock().get(&key) {
-            if let Err(e) = unsafe { conf.set_session(session) } {
+            if let Err(e) = unsafe { conf.set_session(&session) } {
                 return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e)));
             }
         }
 
+        conf.set_ex_data(*KEY_INDEX, key);
+
         let f = conf.connect_async(host, stream)
-            .map(move |s| {
-                if !s.get_ref().ssl().session_reused() {
-                    self.session_cache
-                        .lock()
-                        .insert(key, s.get_ref().ssl().session().expect("BUG").to_owned());
-                }
-                MaybeHttpsStream::Https(s)
-            })
+            .map(MaybeHttpsStream::Https)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
 
         Box::new(f)
@@ -137,7 +141,7 @@ impl HttpsConnector<HttpConnector> {
     ) -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
         let mut http = HttpConnector::new(threads, handle);
         http.enforce_http(false);
-        let ssl = SslConnector::builder(SslMethod::tls())?.build();
+        let ssl = SslConnector::builder(SslMethod::tls())?;
         Ok(HttpsConnector::with_connector(http, ssl))
     }
 }
@@ -147,12 +151,28 @@ where
     T: Connect,
 {
     /// Creates a new `HttpsConnector`.
-    pub fn with_connector(http: T, ssl: SslConnector) -> HttpsConnector<T> {
+    ///
+    /// The session cache configuration of `ssl` will be overwritten.
+    pub fn with_connector(http: T, mut ssl: SslConnectorBuilder) -> HttpsConnector<T> {
+        let session_cache = Arc::new(Mutex::new(SessionCache::new()));
+
+        ssl.set_session_cache_mode(SslSessionCacheMode::CLIENT);
+
+        let cache = session_cache.clone();
+        ssl.set_new_session_callback(move |ssl, session| {
+            if let Some(key) = ssl.ex_data(*KEY_INDEX) {
+                cache.lock().insert(key.clone(), session);
+            }
+        });
+
+        let cache = session_cache.clone();
+        ssl.set_remove_session_callback(move |_, session| cache.lock().remove(session));
+
         HttpsConnector {
             http,
             inner: Inner {
-                ssl,
-                session_cache: Arc::new(Mutex::new(HashMap::new())),
+                ssl: ssl.build(),
+                session_cache,
                 callback: None,
             },
         }
@@ -284,6 +304,9 @@ mod test {
     use futures::stream::Stream;
     use hyper::Client;
     use tokio_core::reactor::Core;
+    use std::net::TcpListener;
+    use std::thread;
+    use openssl::ssl::{SslContext, SslFiletype};
 
     use super::*;
 
@@ -293,18 +316,126 @@ mod test {
         let handle = core.handle();
 
         let ssl = HttpsConnector::new(1, &handle).unwrap();
-        let client = Client::configure().connector(ssl).build(&handle);
+        let client = Client::configure()
+            .connector(ssl)
+            .keep_alive(false)
+            .build(&handle);
 
         let f = client
             .get("https://www.google.com".parse().unwrap())
             .and_then(|resp| {
                 assert!(resp.status().is_success(), "{}", resp.status());
-                resp.body().fold(vec![], |mut buf, chunk| {
-                    buf.extend_from_slice(&chunk);
-                    Ok::<_, hyper::Error>(buf)
-                })
+                resp.body().for_each(|_| Ok(()))
             });
-        let body = core.run(f).unwrap();
-        println!("{}", String::from_utf8_lossy(&body));
+        core.run(f).unwrap();
+
+        let f = client
+            .get("https://www.google.com".parse().unwrap())
+            .and_then(|resp| {
+                assert!(resp.status().is_success(), "{}", resp.status());
+                resp.body().for_each(|_| Ok(()))
+            });
+        core.run(f).unwrap();
+
+        let f = client
+            .get("https://www.google.com".parse().unwrap())
+            .and_then(|resp| {
+                assert!(resp.status().is_success(), "{}", resp.status());
+                resp.body().for_each(|_| Ok(()))
+            });
+        core.run(f).unwrap();
+    }
+
+    #[test]
+    fn localhost() {
+        let listener = TcpListener::bind("127.0.0.1:15410").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let mut ctx = SslContext::builder(SslMethod::tls()).unwrap();
+        ctx.set_session_id_context(b"test").unwrap();
+        ctx.set_certificate_chain_file("test/cert.pem").unwrap();
+        ctx.set_private_key_file("test/key.pem", SslFiletype::PEM)
+            .unwrap();
+        let ctx = ctx.build();
+
+        let thread = thread::spawn(move || {
+            let stream = listener.accept().unwrap().0;
+            let ssl = Ssl::new(&ctx).unwrap();
+            let mut stream = ssl.accept(stream).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            stream.shutdown().unwrap();
+            drop(stream);
+
+            let stream = listener.accept().unwrap().0;
+            let ssl = Ssl::new(&ctx).unwrap();
+            let mut stream = ssl.accept(stream).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            stream.shutdown().unwrap();
+            drop(stream);
+
+            let stream = listener.accept().unwrap().0;
+            let ssl = Ssl::new(&ctx).unwrap();
+            let mut stream = ssl.accept(stream).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            stream.shutdown().unwrap();
+            drop(stream);
+        });
+
+        let mut core = Core::new().unwrap();
+        let handle = core.handle();
+
+        let mut connector = HttpConnector::new(1, &handle);
+        connector.enforce_http(false);
+        let mut ssl = SslConnector::builder(SslMethod::tls()).unwrap();
+        ssl.set_ca_file("test/cert.pem").unwrap();
+
+        #[cfg(ossl111)]
+        {
+            use std::fs::File;
+            use std::io::Write;
+
+            let file = File::create("target/keyfile.log").unwrap();
+            ssl.set_keylog_callback(move |_, line| {
+                let _ = writeln!(&file, "{}", line);
+            });
+        }
+
+        let ssl = HttpsConnector::with_connector(connector, ssl);
+        let client = Client::configure()
+            .connector(ssl)
+            .keep_alive(false)
+            .build(&handle);
+
+        let f = client
+            .get(format!("https://localhost:{}", port).parse().unwrap())
+            .and_then(|resp| {
+                assert!(resp.status().is_success(), "{}", resp.status());
+                resp.body().for_each(|_| Ok(()))
+            });
+        core.run(f).unwrap();
+
+        let f = client
+            .get(format!("https://localhost:{}", port).parse().unwrap())
+            .and_then(|resp| {
+                assert!(resp.status().is_success(), "{}", resp.status());
+                resp.body().for_each(|_| Ok(()))
+            });
+        core.run(f).unwrap();
+
+        let f = client
+            .get(format!("https://localhost:{}", port).parse().unwrap())
+            .and_then(|resp| {
+                assert!(resp.status().is_success(), "{}", resp.status());
+                resp.body().for_each(|_| Ok(()))
+            });
+        core.run(f).unwrap();
+
+        thread.join().unwrap();
     }
 }
