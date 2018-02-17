@@ -6,6 +6,7 @@ description = "Hyper SSL support via OpenSSL"
 license = "MIT/Apache-2.0"
 repository = "https://github.com/sfackler/hyper-openssl"
 readme = "README.md"
+exclude = ["test/*"]
 
 [dependencies]
 antidote = "1.0.0"
@@ -21,5 +22,5 @@ tokio-service = "0.1.0"
 futures = "0.1.14"
 
 [patch.crates-io]
-openssl = { path = "../rust-openssl/openssl" }
-openssl-sys = { path = "../rust-openssl/openssl-sys" }
+openssl = { git = "https://github.com/sfackler/rust-openssl" }
+openssl-sys = { git = "https://github.com/sfackler/rust-openssl" }
