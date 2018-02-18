@@ -6,11 +6,15 @@ description = "Hyper SSL support via OpenSSL"
 license = "MIT/Apache-2.0"
 repository = "https://github.com/sfackler/hyper-openssl"
 readme = "README.md"
+exclude = ["test/*"]
 
 [dependencies]
 antidote = "1.0.0"
 hyper = { version = "0.11.0", default-features = false }
-openssl = "0.10"
+lazy_static = "1.0"
+linked_hash_set = "0.1"
+openssl = { version = "0.10.4", features = ["v111"] }
+openssl-sys = "0.9.26"
 tokio-core = "0.1.8"
 tokio-io = "0.1.2"
 tokio-openssl = "0.2"
