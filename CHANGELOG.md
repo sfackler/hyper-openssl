@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [v0.5.0] - 2018-02-18
+
+### Changed
+
+* The `HttpsConnector::with_connector` function now takes an `SslConnectorBuilder` rather than an
+    `SslConnector` due to a change in the session caching implementation. This is requried to
+    properly support TLSv1.3.
+
 ## [v0.4.1] - 2018-01-11
 
 ### Changed
@@ -25,7 +33,8 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.4.1...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.5.0...master
+[v0.5.0]: https://github.com/sfackler/hyper-openssl/compare/0.4.1...0.5.0
 [v0.4.1]: https://github.com/sfackler/hyper-openssl/compare/0.4.0...0.4.1
 [v0.4.0]: https://github.com/sfackler/hyper-openssl/compare/0.3.1...0.4.0
 [release tags]: https://github.com/sfackler/hyper-openssl/releases
