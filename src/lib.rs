@@ -142,7 +142,7 @@ impl HttpsConnector<HttpConnector> {
         let mut http = HttpConnector::new(threads, handle);
         http.enforce_http(false);
         let ssl = SslConnector::builder(SslMethod::tls())?;
-        Ok(HttpsConnector::with_connector(http, ssl))
+        HttpsConnector::with_connector(http, ssl)
     }
 }
 
@@ -153,7 +153,10 @@ where
     /// Creates a new `HttpsConnector`.
     ///
     /// The session cache configuration of `ssl` will be overwritten.
-    pub fn with_connector(http: T, mut ssl: SslConnectorBuilder) -> HttpsConnector<T> {
+    pub fn with_connector(
+        http: T,
+        mut ssl: SslConnectorBuilder,
+    ) -> Result<HttpsConnector<T>, ErrorStack> {
         let session_cache = Arc::new(Mutex::new(SessionCache::new()));
 
         ssl.set_session_cache_mode(SslSessionCacheMode::CLIENT);
@@ -168,14 +171,14 @@ where
         let cache = session_cache.clone();
         ssl.set_remove_session_callback(move |_, session| cache.lock().remove(session));
 
-        HttpsConnector {
+        Ok(HttpsConnector {
             http,
             inner: Inner {
                 ssl: ssl.build(),
                 session_cache,
                 callback: None,
             },
-        }
+        })
     }
 
     /// Registers a callback which can customize the configuration of each connection.
@@ -406,7 +409,7 @@ mod test {
             });
         }
 
-        let ssl = HttpsConnector::with_connector(connector, ssl);
+        let ssl = HttpsConnector::with_connector(connector, ssl).unwrap();
         let client = Client::configure()
             .connector(ssl)
             .keep_alive(false)
