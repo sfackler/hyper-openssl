@@ -8,15 +8,22 @@ repository = "https://github.com/sfackler/hyper-openssl"
 readme = "README.md"
 exclude = ["test/*"]
 
+[features]
+default = ["runtime"]
+
+runtime = ["hyper/runtime"]
+
 [dependencies]
 antidote = "1.0.0"
-hyper = { version = "0.11.0", default-features = false }
+hyper = { version = "0.12", default-features = false }
 lazy_static = "1.0"
 linked_hash_set = "0.1"
-openssl = { version = "0.10.4", features = ["v111"] }
+openssl = "0.10.7"
 openssl-sys = "0.9.26"
-tokio-core = "0.1.8"
 tokio-io = "0.1.2"
 tokio-openssl = "0.2"
-tokio-service = "0.1.0"
 futures = "0.1.14"
+
+[dev-dependencies]
+hyper = "0.12"
+tokio = "0.1"

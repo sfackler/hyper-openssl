@@ -1,29 +1,4 @@
 //! Hyper SSL support via OpenSSL.
-//!
-//! # Usage
-//!
-//! On the client side:
-//!
-//! ```
-//! extern crate hyper;
-//! extern crate hyper_openssl;
-//! extern crate tokio_core;
-//!
-//! use hyper::Client;
-//! use hyper_openssl::HttpsConnector;
-//! use tokio_core::reactor::Core;
-//!
-//! fn main() {
-//!     let mut core = Core::new().unwrap();
-//!
-//!     let client = Client::configure()
-//!         .connector(HttpsConnector::new(4, &core.handle()).unwrap())
-//!         .build(&core.handle());
-//!
-//!     let res = core.run(client.get("https://hyper.rs".parse().unwrap())).unwrap();
-//!     assert!(res.status().is_success());
-//! }
-//! ```
 #![warn(missing_docs)]
 #![doc(html_root_url = "https://docs.rs/hyper-openssl/0.4")]
 
@@ -32,30 +7,31 @@ extern crate futures;
 extern crate hyper;
 extern crate linked_hash_set;
 pub extern crate openssl;
-extern crate tokio_core;
 extern crate tokio_io;
 extern crate tokio_openssl;
-extern crate tokio_service;
 
 #[macro_use]
 extern crate lazy_static;
 
+#[cfg(test)]
+extern crate tokio;
+
 use antidote::Mutex;
-use futures::{Future, Poll};
-use futures::future;
-use hyper::client::{Connect, HttpConnector};
-use hyper::Uri;
+use futures::{Async, Future, Poll};
+use hyper::client::connect::{Connect, Connected, Destination};
+#[cfg(feature = "runtime")]
+use hyper::client::HttpConnector;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
-use openssl::ssl::{ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod,
-                   SslSessionCacheMode};
+use openssl::ssl::{
+    ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod, SslSessionCacheMode,
+};
+use std::error::Error;
 use std::io::{self, Read, Write};
-use std::marker::PhantomData;
+use std::mem;
 use std::sync::Arc;
-use tokio_core::reactor::Handle;
 use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_openssl::{ConnectConfigurationExt, SslStream};
-use tokio_service::Service;
+use tokio_openssl::{ConnectAsync, ConnectConfigurationExt, SslStream};
 
 use cache::{SessionCache, SessionKey};
 
@@ -70,58 +46,33 @@ lazy_static! {
 struct Inner {
     ssl: SslConnector,
     session_cache: Arc<Mutex<SessionCache>>,
-    callback:
-        Option<Arc<Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send>>,
+    callback: Option<
+        Arc<Fn(&mut ConnectConfiguration, &Destination) -> Result<(), ErrorStack> + Sync + Send>,
+    >,
 }
 
 impl Inner {
-    fn connect<S>(
-        self,
-        uri: Uri,
-        stream: S,
-    ) -> Box<Future<Item = MaybeHttpsStream<S>, Error = io::Error>>
-    where
-        S: 'static + AsyncRead + AsyncWrite,
-    {
-        let host = match uri.host() {
-            Some(host) => host,
-            None => {
-                return Box::new(future::err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "invalid url, missing host",
-                )))
-            }
-        };
-
-        let mut conf = match self.ssl.configure() {
-            Ok(conf) => conf,
-            Err(e) => return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e))),
-        };
+    fn setup_ssl(&self, destination: &Destination) -> Result<ConnectConfiguration, ErrorStack> {
+        let mut conf = self.ssl.configure()?;
 
         if let Some(ref callback) = self.callback {
-            if let Err(e) = callback(&mut conf, &uri) {
-                return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e)));
-            }
+            callback(&mut conf, destination)?;
         }
 
         let key = SessionKey {
-            host: host.to_owned(),
-            port: uri.port().unwrap_or(443),
+            host: destination.host().to_string(),
+            port: destination.port().unwrap_or(443),
         };
 
         if let Some(session) = self.session_cache.lock().get(&key) {
-            if let Err(e) = unsafe { conf.set_session(&session) } {
-                return Box::new(future::err(io::Error::new(io::ErrorKind::Other, e)));
+            unsafe {
+                conf.set_session(&session)?;
             }
         }
 
         conf.set_ex_data(*KEY_INDEX, key);
 
-        let f = conf.connect_async(host, stream)
-            .map(MaybeHttpsStream::Https)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
-
-        Box::new(f)
+        Ok(conf)
     }
 }
 
@@ -132,14 +83,15 @@ pub struct HttpsConnector<T> {
     inner: Inner,
 }
 
+#[cfg(feature = "runtime")]
 impl HttpsConnector<HttpConnector> {
-    /// Creates a new `HttpsConnector` with default settings and using the
-    /// standard Hyper `HttpConnector`.
-    pub fn new(
-        threads: usize,
-        handle: &Handle,
-    ) -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
-        let mut http = HttpConnector::new(threads, handle);
+    /// Creates a a new `HttpsConnector` using default settings.
+    ///
+    /// The Hyper `HttpConnector` is used to perform the TCP socket connection.
+    ///
+    /// Requires the `runtime` Cargo feature.
+    pub fn new(threads: usize) -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
+        let mut http = HttpConnector::new(threads);
         http.enforce_http(false);
         let ssl = SslConnector::builder(SslMethod::tls())?;
         HttpsConnector::with_connector(http, ssl)
@@ -186,56 +138,97 @@ where
     /// It is provided with a reference to the `ConnectConfiguration` as well as the URI.
     pub fn set_callback<F>(&mut self, callback: F)
     where
-        F: Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send,
+        F: Fn(&mut ConnectConfiguration, &Destination) -> Result<(), ErrorStack>
+            + 'static
+            + Sync
+            + Send,
     {
         self.inner.callback = Some(Arc::new(callback));
     }
 }
 
-impl<T> Service for HttpsConnector<T>
+impl<T> Connect for HttpsConnector<T>
 where
     T: Connect,
 {
-    type Request = Uri;
-    type Response = MaybeHttpsStream<T::Output>;
-    type Error = io::Error;
+    type Transport = MaybeHttpsStream<T::Transport>;
+    type Error = Box<Error + Sync + Send>;
     type Future = ConnectFuture<T>;
 
-    fn call(&self, uri: Uri) -> ConnectFuture<T> {
-        let f = self.http.connect(uri.clone());
-
-        let f = if uri.scheme() == Some("https") {
-            let inner = self.inner.clone();
-            Box::new(f.and_then(move |s| inner.connect(uri, s))) as Box<_>
+    fn connect(&self, destination: Destination) -> ConnectFuture<T> {
+        let ssl = if destination.scheme() == "https" {
+            // ideally we'd be able to defer this work until after we successfully connect but Destination isn't Clone
+            match self.inner.setup_ssl(&destination) {
+                Ok(ssl) => Some((ssl, destination.host().to_string())),
+                Err(e) => return ConnectFuture(ConnectState::Error(e.into())),
+            }
         } else {
-            Box::new(f.map(|s| MaybeHttpsStream::Http(s))) as Box<_>
+            None
         };
 
-        ConnectFuture {
-            f: f,
-            _p: PhantomData,
-        }
+        let f = self.http.connect(destination);
+
+        ConnectFuture(ConnectState::InnerConnect(f, ssl))
     }
 }
 
-/// A future connecting to a remote HTTP server.
-pub struct ConnectFuture<T>
+enum ConnectState<T>
 where
     T: Connect,
 {
-    f: Box<Future<Item = MaybeHttpsStream<T::Output>, Error = io::Error>>,
-    _p: PhantomData<T>,
+    InnerConnect(T::Future, Option<(ConnectConfiguration, String)>),
+    Handshake(ConnectAsync<T::Transport>, Connected),
+    Error(Box<Error + Sync + Send>),
+    Terminal,
 }
+
+/// A future connecting to a remote HTTP server.
+pub struct ConnectFuture<T>(ConnectState<T>)
+where
+    T: Connect;
 
 impl<T> Future for ConnectFuture<T>
 where
     T: Connect,
 {
-    type Item = MaybeHttpsStream<T::Output>;
-    type Error = io::Error;
+    type Item = (MaybeHttpsStream<T::Transport>, Connected);
+    type Error = Box<Error + Sync + Send>;
 
-    fn poll(&mut self) -> Poll<MaybeHttpsStream<T::Output>, io::Error> {
-        self.f.poll()
+    fn poll(
+        &mut self,
+    ) -> Poll<(MaybeHttpsStream<T::Transport>, Connected), Box<Error + Sync + Send>> {
+        loop {
+            match mem::replace(&mut self.0, ConnectState::Terminal) {
+                ConnectState::InnerConnect(mut f, ssl) => match f.poll() {
+                    Ok(Async::Ready((stream, connected))) => match ssl {
+                        Some((ssl, host)) => {
+                            let f = ssl.connect_async(&host, stream);
+                            self.0 = ConnectState::Handshake(f, connected);
+                        }
+                        None => {
+                            return Ok(Async::Ready((MaybeHttpsStream::Http(stream), connected)))
+                        }
+                    },
+                    Ok(Async::NotReady) => {
+                        self.0 = ConnectState::InnerConnect(f, ssl);
+                        return Ok(Async::NotReady);
+                    }
+                    Err(e) => return Err(e.into()),
+                },
+                ConnectState::Handshake(mut f, connected) => match f.poll() {
+                    Ok(Async::Ready(stream)) => {
+                        return Ok(Async::Ready((MaybeHttpsStream::Https(stream), connected)))
+                    }
+                    Ok(Async::NotReady) => {
+                        self.0 = ConnectState::Handshake(f, connected);
+                        return Ok(Async::NotReady);
+                    }
+                    Err(e) => return Err(e.into()),
+                },
+                ConnectState::Error(e) => return Err(e.into()),
+                ConnectState::Terminal => panic!("future polled after completion"),
+            };
+        }
     }
 }
 
@@ -305,48 +298,46 @@ where
 #[cfg(test)]
 mod test {
     use futures::stream::Stream;
-    use hyper::Client;
-    use tokio_core::reactor::Core;
+    use hyper::client::HttpConnector;
+    use hyper::{Body, Client};
+    use openssl::ssl::{SslContext, SslFiletype, SslMethod};
     use std::net::TcpListener;
     use std::thread;
-    use openssl::ssl::{SslContext, SslFiletype};
+    use tokio::runtime::current_thread::Runtime;
 
     use super::*;
 
     #[test]
+    #[cfg(feature = "runtime")]
     fn google() {
-        let mut core = Core::new().unwrap();
-        let handle = core.handle();
+        let ssl = HttpsConnector::new(4).unwrap();
+        let client = Client::builder().keep_alive(false).build::<_, Body>(ssl);
 
-        let ssl = HttpsConnector::new(1, &handle).unwrap();
-        let client = Client::configure()
-            .connector(ssl)
-            .keep_alive(false)
-            .build(&handle);
+        let mut runtime = Runtime::new().unwrap();
 
         let f = client
             .get("https://www.google.com".parse().unwrap())
             .and_then(|resp| {
                 assert!(resp.status().is_success(), "{}", resp.status());
-                resp.body().for_each(|_| Ok(()))
+                resp.into_body().for_each(|_| Ok(()))
             });
-        core.run(f).unwrap();
+        runtime.block_on(f).unwrap();
 
         let f = client
             .get("https://www.google.com".parse().unwrap())
             .and_then(|resp| {
                 assert!(resp.status().is_success(), "{}", resp.status());
-                resp.body().for_each(|_| Ok(()))
+                resp.into_body().for_each(|_| Ok(()))
             });
-        core.run(f).unwrap();
+        runtime.block_on(f).unwrap();
 
         let f = client
             .get("https://www.google.com".parse().unwrap())
             .and_then(|resp| {
                 assert!(resp.status().is_success(), "{}", resp.status());
-                resp.body().for_each(|_| Ok(()))
+                resp.into_body().for_each(|_| Ok(()))
             });
-        core.run(f).unwrap();
+        runtime.block_on(f).unwrap();
     }
 
     #[test]
@@ -365,6 +356,7 @@ mod test {
             let stream = listener.accept().unwrap().0;
             let ssl = Ssl::new(&ctx).unwrap();
             let mut stream = ssl.accept(stream).unwrap();
+            stream.read_exact(&mut [0]).unwrap();
             stream
                 .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
                 .unwrap();
@@ -374,6 +366,7 @@ mod test {
             let stream = listener.accept().unwrap().0;
             let ssl = Ssl::new(&ctx).unwrap();
             let mut stream = ssl.accept(stream).unwrap();
+            stream.read_exact(&mut [0]).unwrap();
             stream
                 .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
                 .unwrap();
@@ -383,6 +376,7 @@ mod test {
             let stream = listener.accept().unwrap().0;
             let ssl = Ssl::new(&ctx).unwrap();
             let mut stream = ssl.accept(stream).unwrap();
+            stream.read_exact(&mut [0]).unwrap();
             stream
                 .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
                 .unwrap();
@@ -390,10 +384,7 @@ mod test {
             drop(stream);
         });
 
-        let mut core = Core::new().unwrap();
-        let handle = core.handle();
-
-        let mut connector = HttpConnector::new(1, &handle);
+        let mut connector = HttpConnector::new(1);
         connector.enforce_http(false);
         let mut ssl = SslConnector::builder(SslMethod::tls()).unwrap();
         ssl.set_ca_file("test/cert.pem").unwrap();
@@ -410,34 +401,33 @@ mod test {
         }
 
         let ssl = HttpsConnector::with_connector(connector, ssl).unwrap();
-        let client = Client::configure()
-            .connector(ssl)
-            .keep_alive(false)
-            .build(&handle);
+        let client = Client::builder().build::<_, Body>(ssl);
+
+        let mut runtime = Runtime::new().unwrap();
 
         let f = client
             .get(format!("https://localhost:{}", port).parse().unwrap())
             .and_then(|resp| {
                 assert!(resp.status().is_success(), "{}", resp.status());
-                resp.body().for_each(|_| Ok(()))
+                resp.into_body().for_each(|_| Ok(()))
             });
-        core.run(f).unwrap();
+        runtime.block_on(f).unwrap();
 
         let f = client
             .get(format!("https://localhost:{}", port).parse().unwrap())
             .and_then(|resp| {
                 assert!(resp.status().is_success(), "{}", resp.status());
-                resp.body().for_each(|_| Ok(()))
+                resp.into_body().for_each(|_| Ok(()))
             });
-        core.run(f).unwrap();
+        runtime.block_on(f).unwrap();
 
         let f = client
             .get(format!("https://localhost:{}", port).parse().unwrap())
             .and_then(|resp| {
                 assert!(resp.status().is_success(), "{}", resp.status());
-                resp.body().for_each(|_| Ok(()))
+                resp.into_body().for_each(|_| Ok(()))
             });
-        core.run(f).unwrap();
+        runtime.block_on(f).unwrap();
 
         thread.join().unwrap();
     }
