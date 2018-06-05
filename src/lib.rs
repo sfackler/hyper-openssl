@@ -156,19 +156,18 @@ where
     type Future = ConnectFuture<T>;
 
     fn connect(&self, destination: Destination) -> ConnectFuture<T> {
-        let ssl = if destination.scheme() == "https" {
-            // ideally we'd be able to defer this work until after we successfully connect but Destination isn't Clone
-            match self.inner.setup_ssl(&destination) {
-                Ok(ssl) => Some((ssl, destination.host().to_string())),
-                Err(e) => return ConnectFuture(ConnectState::Error(e.into())),
-            }
+        let tls_setup = if destination.scheme() == "https" {
+            Some((self.inner.clone(), destination.clone()))
         } else {
             None
         };
 
-        let f = self.http.connect(destination);
+        let conn = self.http.connect(destination);
 
-        ConnectFuture(ConnectState::InnerConnect(f, ssl))
+        ConnectFuture(ConnectState::InnerConnect {
+            conn,
+            tls_setup,
+        })
     }
 }
 
@@ -176,9 +175,14 @@ enum ConnectState<T>
 where
     T: Connect,
 {
-    InnerConnect(T::Future, Option<(ConnectConfiguration, String)>),
-    Handshake(ConnectAsync<T::Transport>, Connected),
-    Error(Box<Error + Sync + Send>),
+    InnerConnect {
+        conn: T::Future,
+        tls_setup: Option<(Inner, Destination)>,
+    },
+    Handshake {
+        handshake: ConnectAsync<T::Transport>,
+        connected: Connected,
+    },
     Terminal,
 }
 
@@ -199,33 +203,33 @@ where
     ) -> Poll<(MaybeHttpsStream<T::Transport>, Connected), Box<Error + Sync + Send>> {
         loop {
             match mem::replace(&mut self.0, ConnectState::Terminal) {
-                ConnectState::InnerConnect(mut f, ssl) => match f.poll() {
-                    Ok(Async::Ready((stream, connected))) => match ssl {
-                        Some((ssl, host)) => {
-                            let f = ssl.connect_async(&host, stream);
-                            self.0 = ConnectState::Handshake(f, connected);
+                ConnectState::InnerConnect { mut conn, tls_setup } => match conn.poll() {
+                    Ok(Async::Ready((stream, connected))) => match tls_setup {
+                        Some((inner, destination)) => {
+                            let ssl = inner.setup_ssl(&destination)?;
+                            let handshake = ssl.connect_async(destination.host(), stream);
+                            self.0 = ConnectState::Handshake { handshake, connected };
                         }
                         None => {
                             return Ok(Async::Ready((MaybeHttpsStream::Http(stream), connected)))
                         }
                     },
                     Ok(Async::NotReady) => {
-                        self.0 = ConnectState::InnerConnect(f, ssl);
+                        self.0 = ConnectState::InnerConnect { conn, tls_setup };
                         return Ok(Async::NotReady);
                     }
                     Err(e) => return Err(e.into()),
                 },
-                ConnectState::Handshake(mut f, connected) => match f.poll() {
+                ConnectState::Handshake { mut handshake, connected } => match handshake.poll() {
                     Ok(Async::Ready(stream)) => {
                         return Ok(Async::Ready((MaybeHttpsStream::Https(stream), connected)))
                     }
                     Ok(Async::NotReady) => {
-                        self.0 = ConnectState::Handshake(f, connected);
+                        self.0 = ConnectState::Handshake { handshake, connected };
                         return Ok(Async::NotReady);
                     }
                     Err(e) => return Err(e.into()),
                 },
-                ConnectState::Error(e) => return Err(e.into()),
                 ConnectState::Terminal => panic!("future polled after completion"),
             };
         }
