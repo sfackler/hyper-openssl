@@ -1,6 +1,6 @@
 //! Hyper SSL support via OpenSSL.
 #![warn(missing_docs)]
-#![doc(html_root_url = "https://docs.rs/hyper-openssl/0.4")]
+#![doc(html_root_url = "https://docs.rs/hyper-openssl/0.6")]
 
 extern crate antidote;
 extern crate futures;
@@ -134,8 +134,6 @@ where
     }
 
     /// Registers a callback which can customize the configuration of each connection.
-    ///
-    /// It is provided with a reference to the `ConnectConfiguration` as well as the URI.
     pub fn set_callback<F>(&mut self, callback: F)
     where
         F: Fn(&mut ConnectConfiguration, &Destination) -> Result<(), ErrorStack>
@@ -236,7 +234,7 @@ where
     }
 }
 
-/// A stream which may be wrapped with SSL.
+/// A stream which may be wrapped with TLS.
 pub enum MaybeHttpsStream<T> {
     /// A raw HTTP stream.
     Http(T),

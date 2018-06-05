@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [v0.6.0] - 2018-06-04
+
+### Changed
+
+* Upgraded to hyper 0.12.
+* The callback closure now takes a `&Destination` rather than a `&URI` to match what Hyper provides
+    to connectors.
+
 ## [v0.5.0] - 2018-02-18
 
 ### Changed
@@ -33,7 +41,8 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.5.0...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.6.0...master
+[v0.6.0]: https://github.com/sfackler/hyper-openssl/compare/0.5.0...0.6.0
 [v0.5.0]: https://github.com/sfackler/hyper-openssl/compare/0.4.1...0.5.0
 [v0.4.1]: https://github.com/sfackler/hyper-openssl/compare/0.4.0...0.4.1
 [v0.4.0]: https://github.com/sfackler/hyper-openssl/compare/0.3.1...0.4.0
