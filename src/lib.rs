@@ -3,6 +3,7 @@
 #![doc(html_root_url = "https://docs.rs/hyper-openssl/0.6")]
 
 extern crate antidote;
+extern crate bytes;
 extern crate futures;
 extern crate hyper;
 extern crate linked_hash_set;
@@ -17,6 +18,7 @@ extern crate lazy_static;
 extern crate tokio;
 
 use antidote::Mutex;
+use bytes::{Buf, BufMut};
 use futures::{Async, Future, Poll};
 use hyper::client::connect::{Connect, Connected, Destination};
 #[cfg(feature = "runtime")]
@@ -162,10 +164,7 @@ where
 
         let conn = self.http.connect(destination);
 
-        ConnectFuture(ConnectState::InnerConnect {
-            conn,
-            tls_setup,
-        })
+        ConnectFuture(ConnectState::InnerConnect { conn, tls_setup })
     }
 }
 
@@ -201,12 +200,18 @@ where
     ) -> Poll<(MaybeHttpsStream<T::Transport>, Connected), Box<Error + Sync + Send>> {
         loop {
             match mem::replace(&mut self.0, ConnectState::Terminal) {
-                ConnectState::InnerConnect { mut conn, tls_setup } => match conn.poll() {
+                ConnectState::InnerConnect {
+                    mut conn,
+                    tls_setup,
+                } => match conn.poll() {
                     Ok(Async::Ready((stream, connected))) => match tls_setup {
                         Some((inner, destination)) => {
                             let ssl = inner.setup_ssl(&destination)?;
                             let handshake = ssl.connect_async(destination.host(), stream);
-                            self.0 = ConnectState::Handshake { handshake, connected };
+                            self.0 = ConnectState::Handshake {
+                                handshake,
+                                connected,
+                            };
                         }
                         None => {
                             return Ok(Async::Ready((MaybeHttpsStream::Http(stream), connected)))
@@ -218,12 +223,18 @@ where
                     }
                     Err(e) => return Err(e.into()),
                 },
-                ConnectState::Handshake { mut handshake, connected } => match handshake.poll() {
+                ConnectState::Handshake {
+                    mut handshake,
+                    connected,
+                } => match handshake.poll() {
                     Ok(Async::Ready(stream)) => {
                         return Ok(Async::Ready((MaybeHttpsStream::Https(stream), connected)))
                     }
                     Ok(Async::NotReady) => {
-                        self.0 = ConnectState::Handshake { handshake, connected };
+                        self.0 = ConnectState::Handshake {
+                            handshake,
+                            connected,
+                        };
                         return Ok(Async::NotReady);
                     }
                     Err(e) => return Err(e.into()),
@@ -264,6 +275,16 @@ where
             MaybeHttpsStream::Https(ref s) => s.prepare_uninitialized_buffer(buf),
         }
     }
+
+    fn read_buf<B>(&mut self, buf: &mut B) -> Poll<usize, io::Error>
+    where
+        B: BufMut,
+    {
+        match *self {
+            MaybeHttpsStream::Http(ref mut s) => s.read_buf(buf),
+            MaybeHttpsStream::Https(ref mut s) => s.read_buf(buf),
+        }
+    }
 }
 
 impl<T> Write for MaybeHttpsStream<T>
@@ -293,6 +314,16 @@ where
         match *self {
             MaybeHttpsStream::Http(ref mut s) => s.shutdown(),
             MaybeHttpsStream::Https(ref mut s) => s.shutdown(),
+        }
+    }
+
+    fn write_buf<B>(&mut self, buf: &mut B) -> Poll<usize, io::Error>
+    where
+        B: Buf,
+    {
+        match *self {
+            MaybeHttpsStream::Http(ref mut s) => s.write_buf(buf),
+            MaybeHttpsStream::Https(ref mut s) => s.write_buf(buf),
         }
     }
 }
