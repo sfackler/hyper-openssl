@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [v0.6.1] - 2018-06-13
+
+### Changed
+
+* `MaybeHttpsStream` now delegates `AsyncRead::read_buf` and `AsyncWrite::write_buf` to support
+    readv/writev over HTTP connections.
+
 ## [v0.6.0] - 2018-06-04
 
 ### Changed
@@ -41,7 +48,8 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.6.0...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.6.1...master
+[v0.6.1]: https://github.com/sfackler/hyper-openssl/compare/0.6.0...0.6.1
 [v0.6.0]: https://github.com/sfackler/hyper-openssl/compare/0.5.0...0.6.0
 [v0.5.0]: https://github.com/sfackler/hyper-openssl/compare/0.4.1...0.5.0
 [v0.4.1]: https://github.com/sfackler/hyper-openssl/compare/0.4.0...0.4.1
