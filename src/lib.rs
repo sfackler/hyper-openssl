@@ -78,7 +78,7 @@ impl Inner {
     }
 }
 
-/// An Connector using OpenSSL to support `http` and `https` schemes.
+/// A Connector using OpenSSL to support `http` and `https` schemes.
 #[derive(Clone)]
 pub struct HttpsConnector<T> {
     http: T,
