@@ -21,11 +21,10 @@ save_deps: &SAVE_DEPS
 version: 2
 jobs:
   build:
-    working_directory: ~/build
     docker:
-      - image: rust:1.22.1
-        environment:
-          RUSTFLAGS: -D warnings
+      - image: rust:1.26.0
+    environment:
+      RUSTFLAGS: -D warnings
     steps:
       - checkout
       - *RESTORE_REGISTRY
@@ -35,3 +34,9 @@ jobs:
       - *RESTORE_DEPS
       - run: cargo test
       - *SAVE_DEPS
+
+workflows:
+  version: 2
+  main:
+    jobs:
+     - build
