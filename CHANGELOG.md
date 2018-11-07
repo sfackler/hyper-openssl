@@ -57,7 +57,8 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.6.1...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.6.2...master
+[v0.6.2]: https://github.com/sfackler/hyper-openssl/compare/0.6.1...0.6.2
 [v0.6.1]: https://github.com/sfackler/hyper-openssl/compare/0.6.0...0.6.1
 [v0.6.0]: https://github.com/sfackler/hyper-openssl/compare/0.5.0...0.6.0
 [v0.5.0]: https://github.com/sfackler/hyper-openssl/compare/0.4.1...0.5.0
