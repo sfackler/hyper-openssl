@@ -91,13 +91,20 @@ pub struct HttpsConnector<T> {
 impl HttpsConnector<HttpConnector> {
     /// Creates a a new `HttpsConnector` using default settings.
     ///
-    /// The Hyper `HttpConnector` is used to perform the TCP socket connection.
+    /// The Hyper `HttpConnector` is used to perform the TCP socket connection. ALPN is configured to support both
+    /// HTTP/2 and HTTP/1.1.
     ///
     /// Requires the `runtime` Cargo feature.
     pub fn new(threads: usize) -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
         let mut http = HttpConnector::new(threads);
         http.enforce_http(false);
-        let ssl = SslConnector::builder(SslMethod::tls())?;
+        let mut ssl = SslConnector::builder(SslMethod::tls())?;
+        // avoid unused_mut warnings when building against OpenSSL 1.0.1
+        ssl = ssl;
+
+        #[cfg(ossl102)]
+        ssl.set_alpn_protos(b"\x02h2\x08http/1.1")?;
+
         HttpsConnector::with_connector(http, ssl)
     }
 }
@@ -227,10 +234,19 @@ where
                 },
                 ConnectState::Handshake {
                     mut handshake,
-                    connected,
+                    mut connected,
                 } => match handshake.poll() {
                     Ok(Async::Ready(stream)) => {
-                        return Ok(Async::Ready((MaybeHttpsStream::Https(stream), connected)))
+                        // avoid unused_mut warnings on OpenSSL 1.0.1
+                        connected = connected;
+
+                        #[cfg(ossl102)]
+                        {
+                            if let Some(b"h2") = stream.get_ref().ssl().selected_alpn_protocol() {
+                                connected = connected.negotiated_h2();
+                            }
+                        }
+                        return Ok(Async::Ready((MaybeHttpsStream::Https(stream), connected)));
                     }
                     Ok(Async::NotReady) => {
                         self.0 = ConnectState::Handshake {

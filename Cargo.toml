@@ -16,7 +16,7 @@ runtime = ["hyper/runtime"]
 [dependencies]
 antidote = "1.0.0"
 bytes = "0.4"
-hyper = { version = "0.12.1", default-features = false }
+hyper = { version = "0.12.14", default-features = false }
 lazy_static = "1.0"
 linked_hash_set = "0.1"
 openssl = "0.10.7"
