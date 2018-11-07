@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [v0.6.2] - 2018-11-07
+
+### Added
+
+* Added ALPN support. If the `h2` protocol is selected during the handshake via ALPN, the connector
+    will automatically indicate that to Hyper via the `Connected::negotiated_h2` method. The
+    `HttpsConnector::new` method configures ALPN to support both the `h2` and `http/1.1` protocols.
+    Code using `HttpsConnector::with_connector` will need to configure ALPN manually.
+
 ## [v0.6.1] - 2018-06-13
 
 ### Changed
