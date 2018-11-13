@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [v0.7.0] - 2018-11-13
+
+### Changed
+
+* Upgraded `tokio-openssl` to 0.3. Handshake errors now return `openssl::ssl::HandshakeError`
+    rather than `openssl::ssl::Error`.
+
 ## [v0.6.2] - 2018-11-07
 
 ### Added
@@ -57,7 +64,8 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.6.2...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.7.0...master
+[v0.7.0]: https://github.com/sfackler/hyper-openssl/compare/0.6.2...0.7.0
 [v0.6.2]: https://github.com/sfackler/hyper-openssl/compare/0.6.1...0.6.2
 [v0.6.1]: https://github.com/sfackler/hyper-openssl/compare/0.6.0...0.6.1
 [v0.6.0]: https://github.com/sfackler/hyper-openssl/compare/0.5.0...0.6.0
