@@ -1,6 +1,6 @@
 //! Hyper SSL support via OpenSSL.
 #![warn(missing_docs)]
-#![doc(html_root_url = "https://docs.rs/hyper-openssl/0.6")]
+#![doc(html_root_url = "https://docs.rs/hyper-openssl/0.7")]
 
 extern crate antidote;
 extern crate bytes;
