@@ -29,6 +29,7 @@ use openssl::ssl::{
     ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod, SslSessionCacheMode,
 };
 use std::error::Error;
+use std::fmt::Debug;
 use std::io::{self, Read, Write};
 use std::mem;
 use std::sync::Arc;
@@ -112,6 +113,7 @@ impl HttpsConnector<HttpConnector> {
 impl<T> HttpsConnector<T>
 where
     T: Connect,
+    T::Transport: Debug + Sync + Send,
 {
     /// Creates a new `HttpsConnector`.
     ///
@@ -159,6 +161,7 @@ where
 impl<T> Connect for HttpsConnector<T>
 where
     T: Connect,
+    T::Transport: Debug + Sync + Send,
 {
     type Transport = MaybeHttpsStream<T::Transport>;
     type Error = Box<Error + Sync + Send>;
@@ -200,6 +203,7 @@ where
 impl<T> Future for ConnectFuture<T>
 where
     T: Connect,
+    T::Transport: Debug + Sync + Send,
 {
     type Item = (MaybeHttpsStream<T::Transport>, Connected);
     type Error = Box<Error + Sync + Send>;

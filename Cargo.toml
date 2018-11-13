@@ -22,7 +22,7 @@ linked_hash_set = "0.1"
 openssl = "0.10.7"
 openssl-sys = "0.9.26"
 tokio-io = "0.1.2"
-tokio-openssl = "0.2"
+tokio-openssl = "0.3"
 futures = "0.1.14"
 
 [dev-dependencies]
