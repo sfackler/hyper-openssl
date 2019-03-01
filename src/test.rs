@@ -131,12 +131,16 @@ fn alpn_h2() {
         .and_then(move |(stream, _)| ctx.accept_async(stream))
         .map_err(|e| panic!("tls accept error: {}", e))
         .and_then(|stream| {
-            assert_eq!(stream.get_ref().ssl().selected_alpn_protocol().unwrap(), b"h2");
+            assert_eq!(
+                stream.get_ref().ssl().selected_alpn_protocol().unwrap(),
+                b"h2"
+            );
             Http::new().http2_only(true).serve_connection(
                 stream,
                 service::service_fn_ok(|_| Response::new(Body::empty())),
             )
-        }).map(|_| ())
+        })
+        .map(|_| ())
         .map_err(|e| panic!("http error: {}", e));
 
     let mut runtime = Runtime::new().unwrap();

@@ -1,10 +1,10 @@
 use linked_hash_set::LinkedHashSet;
+#[cfg(ossl111)]
+use openssl::ssl::SslVersion;
 use openssl::ssl::{SslSession, SslSessionRef};
 use std::borrow::Borrow;
 use std::collections::hash_map::{Entry, HashMap};
 use std::hash::{Hash, Hasher};
-#[cfg(ossl111)]
-use openssl::ssl::SslVersion;
 
 #[derive(Hash, PartialEq, Eq, Clone)]
 pub struct SessionKey {
