@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [v0.7.1] - 2019-03-01
+
+### Changed
+
+* TLSv1.3 sessions are now only used once, in accordance with the RFC's recommendation.
+
 ## [v0.7.0] - 2018-11-13
 
 ### Changed
@@ -64,7 +70,8 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.7.0...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.7.1...master
+[v0.7.1]: https://github.com/sfackler/hyper-openssl/compare/0.7.0...0.7.1
 [v0.7.0]: https://github.com/sfackler/hyper-openssl/compare/0.6.2...0.7.0
 [v0.6.2]: https://github.com/sfackler/hyper-openssl/compare/0.6.1...0.6.2
 [v0.6.1]: https://github.com/sfackler/hyper-openssl/compare/0.6.0...0.6.1
