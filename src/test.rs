@@ -42,10 +42,15 @@ fn google() {
 
 #[test]
 fn localhost() {
-    let listener = ::std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = ::std::net::TcpListener::bind("127.0.0.1:15410").unwrap();
     let port = listener.local_addr().unwrap().port();
 
     let mut ctx = SslAcceptor::mozilla_modern(SslMethod::tls()).unwrap();
+    #[cfg(ossl111)]
+    {
+        ctx.clear_options(openssl::ssl::SslOptions::NO_TLSV1_3);
+    }
+
     ctx.set_session_id_context(b"test").unwrap();
     ctx.set_certificate_chain_file("test/cert.pem").unwrap();
     ctx.set_private_key_file("test/key.pem", SslFiletype::PEM)

@@ -3,6 +3,8 @@ use openssl::ssl::{SslSession, SslSessionRef};
 use std::borrow::Borrow;
 use std::collections::hash_map::{Entry, HashMap};
 use std::hash::{Hash, Hasher};
+#[cfg(ossl111)]
+use openssl::ssl::SslVersion;
 
 #[derive(Hash, PartialEq, Eq, Clone)]
 pub struct SessionKey {
@@ -60,10 +62,22 @@ impl SessionCache {
     }
 
     pub fn get(&mut self, key: &SessionKey) -> Option<SslSession> {
-        let sessions = self.sessions.get_mut(key)?;
-        let session = sessions.front().cloned()?;
-        sessions.refresh(&session);
-        Some(session.0)
+        let session = {
+            let sessions = self.sessions.get_mut(key)?;
+            sessions.front().cloned()?.0
+        };
+
+        #[cfg(ossl111)]
+        {
+            // https://tools.ietf.org/html/rfc8446#appendix-C.4
+            // OpenSSL will remove the session from its cache after the handshake completes anyway, but this ensures
+            // that concurrent handshakes don't end up with the same session.
+            if session.protocol_version() == SslVersion::TLS1_3 {
+                self.remove(&session);
+            }
+        }
+
+        Some(session)
     }
 
     pub fn remove(&mut self, session: &SslSessionRef) {

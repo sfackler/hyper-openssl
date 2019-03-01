@@ -50,7 +50,7 @@ lazy_static! {
 #[derive(Clone)]
 struct Inner {
     ssl: SslConnector,
-    session_cache: Arc<Mutex<SessionCache>>,
+    cache: Arc<Mutex<SessionCache>>,
     callback: Option<
         Arc<Fn(&mut ConnectConfiguration, &Destination) -> Result<(), ErrorStack> + Sync + Send>,
     >,
@@ -69,7 +69,7 @@ impl Inner {
             port: destination.port().unwrap_or(443),
         };
 
-        if let Some(session) = self.session_cache.lock().get(&key) {
+        if let Some(session) = self.cache.lock().get(&key) {
             unsafe {
                 conf.set_session(&session)?;
             }
@@ -122,25 +122,29 @@ where
         http: T,
         mut ssl: SslConnectorBuilder,
     ) -> Result<HttpsConnector<T>, ErrorStack> {
-        let session_cache = Arc::new(Mutex::new(SessionCache::new()));
+        let cache = Arc::new(Mutex::new(SessionCache::new()));
 
         ssl.set_session_cache_mode(SslSessionCacheMode::CLIENT);
 
-        let cache = session_cache.clone();
-        ssl.set_new_session_callback(move |ssl, session| {
-            if let Some(key) = ssl.ex_data(*KEY_INDEX) {
-                cache.lock().insert(key.clone(), session);
+        ssl.set_new_session_callback({
+            let cache = cache.clone();
+            move |ssl, session| {
+                if let Some(key) = ssl.ex_data(*KEY_INDEX) {
+                    cache.lock().insert(key.clone(), session);
+                }
             }
         });
 
-        let cache = session_cache.clone();
-        ssl.set_remove_session_callback(move |_, session| cache.lock().remove(session));
+        ssl.set_remove_session_callback({
+            let cache = cache.clone();
+            move |_, session| cache.lock().remove(session)
+        });
 
         Ok(HttpsConnector {
             http,
             inner: Inner {
                 ssl: ssl.build(),
-                session_cache,
+                cache,
                 callback: None,
             },
         })
@@ -227,7 +231,7 @@ where
                             };
                         }
                         None => {
-                            return Ok(Async::Ready((MaybeHttpsStream::Http(stream), connected)))
+                            return Ok(Async::Ready((MaybeHttpsStream::Http(stream), connected)));
                         }
                     },
                     Ok(Async::NotReady) => {

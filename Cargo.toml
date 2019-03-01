@@ -19,7 +19,7 @@ bytes = "0.4"
 hyper = { version = "0.12.14", default-features = false }
 lazy_static = "1.0"
 linked_hash_set = "0.1"
-openssl = "0.10.7"
+openssl = "0.10.19"
 openssl-sys = "0.9.26"
 tokio-io = "0.1.2"
 tokio-openssl = "0.3"
