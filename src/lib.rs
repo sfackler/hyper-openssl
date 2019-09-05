@@ -1,6 +1,6 @@
 //! Hyper SSL support via OpenSSL.
 #![warn(missing_docs)]
-#![doc(html_root_url = "https://docs.rs/hyper-openssl/0.7")]
+#![doc(html_root_url = "https://docs.rs/hyper-openssl/0.8")]
 
 use antidote::Mutex;
 use bytes::{Buf, BufMut};
