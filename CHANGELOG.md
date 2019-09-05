@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [v0.8.0-alpha.1] - 2019-09-04
+
+### Changed
+
+* Upgraded to hyper 0.13-alpha.1.
+
 ## [v0.7.1] - 2019-03-01
 
 ### Changed
@@ -70,7 +76,8 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.7.1...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.8.0-alpha.1...master
+[v0.8.0-alpha.1]: https://github.com/sfackler/hyper-openssl/compare/0.7.1...0.8.0-alpha.1
 [v0.7.1]: https://github.com/sfackler/hyper-openssl/compare/0.7.0...0.7.1
 [v0.7.0]: https://github.com/sfackler/hyper-openssl/compare/0.6.2...0.7.0
 [v0.6.2]: https://github.com/sfackler/hyper-openssl/compare/0.6.1...0.6.2
