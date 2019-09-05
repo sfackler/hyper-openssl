@@ -1,5 +1,4 @@
 //! Hyper SSL support via OpenSSL.
-#![feature(async_await)]
 #![warn(missing_docs)]
 #![doc(html_root_url = "https://docs.rs/hyper-openssl/0.7")]
 
@@ -11,8 +10,10 @@ use hyper::client::HttpConnector;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
 use openssl::ssl::{
-    ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod, SslSessionCacheMode,
+    ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslSessionCacheMode,
 };
+#[cfg(feature = "runtime")]
+use openssl::ssl::SslMethod;
 use std::error::Error;
 use std::fmt::Debug;
 use std::io;
@@ -83,8 +84,8 @@ impl HttpsConnector<HttpConnector> {
     /// HTTP/2 and HTTP/1.1.
     ///
     /// Requires the `runtime` Cargo feature.
-    pub fn new(threads: usize) -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
-        let mut http = HttpConnector::new(threads);
+    pub fn new() -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
+        let mut http = HttpConnector::new();
         http.enforce_http(false);
         let mut ssl = SslConnector::builder(SslMethod::tls())?;
         // avoid unused_mut warnings when building against OpenSSL 1.0.1
