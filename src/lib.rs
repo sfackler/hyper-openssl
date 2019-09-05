@@ -91,11 +91,8 @@ impl HttpsConnector<HttpConnector> {
         // avoid unused_mut warnings when building against OpenSSL 1.0.1
         ssl = ssl;
 
-        // FIXME reenable when h2 is updated
-        /*
         #[cfg(ossl102)]
         ssl.set_alpn_protos(b"\x02h2\x08http/1.1")?;
-        */
 
         HttpsConnector::with_connector(http, ssl)
     }
