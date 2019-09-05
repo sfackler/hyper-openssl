@@ -18,8 +18,8 @@ runtime = ["hyper/runtime"]
 antidote = "1.0.0"
 bytes = "0.4"
 hyper = { version = "=0.13.0-alpha.1", default-features = false }
-lazy_static = "1.0"
 linked_hash_set = "0.1"
+once_cell = "1.0"
 openssl = "0.10.19"
 openssl-sys = "0.9.26"
 tokio = "=0.2.0-alpha.4"

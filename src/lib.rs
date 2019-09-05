@@ -25,14 +25,15 @@ use cache::{SessionCache, SessionKey};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Poll, Context};
+use once_cell::sync::OnceCell;
 
 mod cache;
 #[cfg(test)]
 mod test;
 
-lazy_static::lazy_static! {
-    // The unwrap here isn't great but this only fails on OOM
-    static ref KEY_INDEX: Index<Ssl, SessionKey> = Ssl::new_ex_index().unwrap();
+fn key_index() -> Result<Index<Ssl, SessionKey>, ErrorStack> {
+    static IDX: OnceCell<Index<Ssl, SessionKey>> = OnceCell::new();
+    IDX.get_or_try_init(|| Ssl::new_ex_index()).map(|v| *v)
 }
 
 #[derive(Clone)]
@@ -63,7 +64,8 @@ impl Inner {
             }
         }
 
-        conf.set_ex_data(*KEY_INDEX, key);
+        let idx = key_index()?;
+        conf.set_ex_data(idx, key);
 
         Ok(conf)
     }
@@ -117,7 +119,7 @@ where
         ssl.set_new_session_callback({
             let cache = cache.clone();
             move |ssl, session| {
-                if let Some(key) = ssl.ex_data(*KEY_INDEX) {
+                if let Some(key) = key_index().ok().and_then(|idx| ssl.ex_data(idx)) {
                     cache.lock().insert(key.clone(), session);
                 }
             }
