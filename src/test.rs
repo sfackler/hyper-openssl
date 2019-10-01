@@ -1,11 +1,9 @@
 use hyper::client::HttpConnector;
-use futures::future;
-use futures::stream::TryStreamExt;
+use hyper::server::conn::Http;
 use hyper::{service, Response};
-use tokio::net::TcpListener;
 use hyper::{Body, Client};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
-use hyper::server::conn::Http;
+use tokio::net::TcpListener;
 
 use super::*;
 
@@ -16,9 +14,13 @@ async fn google() {
     let client = Client::builder().keep_alive(false).build::<_, Body>(ssl);
 
     for _ in 0..3 {
-        let resp = client.get("https://www.google.com".parse().unwrap()).await.unwrap();
+        let resp = client
+            .get("https://www.google.com".parse().unwrap())
+            .await
+            .unwrap();
         assert!(resp.status().is_success(), "{}", resp.status());
-        resp.into_body().try_concat().await.unwrap();
+        let mut body = resp.into_body();
+        while let Some(_) = body.next().await.transpose().unwrap() {}
     }
 }
 
@@ -30,15 +32,20 @@ async fn localhost() {
     let server = async move {
         let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
         acceptor.set_session_id_context(b"test").unwrap();
-        acceptor.set_private_key_file("test/key.pem", SslFiletype::PEM).unwrap();
-        acceptor.set_certificate_chain_file("test/cert.pem").unwrap();
+        acceptor
+            .set_private_key_file("test/key.pem", SslFiletype::PEM)
+            .unwrap();
+        acceptor
+            .set_certificate_chain_file("test/cert.pem")
+            .unwrap();
         let acceptor = acceptor.build();
 
         for _ in 0..3 {
             let stream = listener.accept().await.unwrap().0;
             let stream = tokio_openssl::accept(&acceptor, stream).await.unwrap();
 
-            let service = service::service_fn(|_| future::ready(Ok::<_, io::Error>(Response::new(Body::empty()))));
+            let service =
+                service::service_fn(|_| async { Ok::<_, io::Error>(Response::new(Body::empty())) });
 
             Http::new()
                 .keep_alive(false)
@@ -69,9 +76,13 @@ async fn localhost() {
     let client = Client::builder().build::<_, Body>(ssl);
 
     for _ in 0..3 {
-        let resp = client.get(format!("https://localhost:{}", port).parse().unwrap()).await.unwrap();
+        let resp = client
+            .get(format!("https://localhost:{}", port).parse().unwrap())
+            .await
+            .unwrap();
         assert!(resp.status().is_success(), "{}", resp.status());
-        resp.into_body().try_concat().await.unwrap();
+        let mut body = resp.into_body();
+        while let Some(_) = body.next().await.transpose().unwrap() {}
     }
 }
 
@@ -85,8 +96,11 @@ async fn alpn_h2() {
 
     let server = async move {
         let mut acceptor = SslAcceptor::mozilla_modern(SslMethod::tls()).unwrap();
-        acceptor.set_certificate_chain_file("test/cert.pem").unwrap();
-        acceptor.set_private_key_file("test/key.pem", SslFiletype::PEM)
+        acceptor
+            .set_certificate_chain_file("test/cert.pem")
+            .unwrap();
+        acceptor
+            .set_private_key_file("test/key.pem", SslFiletype::PEM)
             .unwrap();
         acceptor.set_alpn_select_callback(|_, client| {
             ssl::select_next_proto(b"\x02h2", client).ok_or(AlpnError::NOACK)
@@ -97,7 +111,8 @@ async fn alpn_h2() {
         let stream = tokio_openssl::accept(&acceptor, stream).await.unwrap();
         assert_eq!(stream.ssl().selected_alpn_protocol().unwrap(), b"h2");
 
-        let service = service::service_fn(|_| future::ready(Ok::<_, io::Error>(Response::new(Body::empty()))));
+        let service =
+            service::service_fn(|_| async { Ok::<_, io::Error>(Response::new(Body::empty())) });
 
         Http::new()
             .http2_only(true)
@@ -116,7 +131,11 @@ async fn alpn_h2() {
     let ssl = HttpsConnector::with_connector(connector, ssl).unwrap();
     let client = Client::builder().build::<_, Body>(ssl);
 
-    let resp = client.get(format!("https://localhost:{}", port).parse().unwrap()).await.unwrap();
+    let resp = client
+        .get(format!("https://localhost:{}", port).parse().unwrap())
+        .await
+        .unwrap();
     assert!(resp.status().is_success(), "{}", resp.status());
-    resp.into_body().try_concat().await.unwrap();
+    let mut body = resp.into_body();
+    while let Some(_) = body.next().await.transpose().unwrap() {}
 }

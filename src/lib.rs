@@ -9,11 +9,11 @@ use hyper::client::connect::{Connect, Connected, Destination};
 use hyper::client::HttpConnector;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
+#[cfg(feature = "runtime")]
+use openssl::ssl::SslMethod;
 use openssl::ssl::{
     ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslSessionCacheMode,
 };
-#[cfg(feature = "runtime")]
-use openssl::ssl::SslMethod;
 use std::error::Error;
 use std::fmt::Debug;
 use std::io;
@@ -22,10 +22,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_openssl::SslStream;
 
 use cache::{SessionCache, SessionKey};
+use once_cell::sync::OnceCell;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Poll, Context};
-use once_cell::sync::OnceCell;
+use std::task::{Context, Poll};
 
 mod cache;
 #[cfg(test)]
@@ -41,7 +41,9 @@ struct Inner {
     ssl: SslConnector,
     cache: Arc<Mutex<SessionCache>>,
     callback: Option<
-        Arc<dyn Fn(&mut ConnectConfiguration, &Destination) -> Result<(), ErrorStack> + Sync + Send>,
+        Arc<
+            dyn Fn(&mut ConnectConfiguration, &Destination) -> Result<(), ErrorStack> + Sync + Send,
+        >,
     >,
 }
 
@@ -218,14 +220,22 @@ where
         }
     }
 
-    fn poll_read(mut self: Pin<&mut Self>, ctx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         match &mut *self {
             MaybeHttpsStream::Http(s) => Pin::new(s).poll_read(ctx, buf),
             MaybeHttpsStream::Https(s) => Pin::new(s).poll_read(ctx, buf),
         }
     }
 
-    fn poll_read_buf<B>(mut self: Pin<&mut Self>, ctx: &mut Context<'_>, buf: &mut B) -> Poll<io::Result<usize>>
+    fn poll_read_buf<B>(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+        buf: &mut B,
+    ) -> Poll<io::Result<usize>>
     where
         B: BufMut,
     {
@@ -240,7 +250,11 @@ impl<T> AsyncWrite for MaybeHttpsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    fn poll_write(mut self: Pin<&mut Self>, ctx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         match &mut *self {
             MaybeHttpsStream::Http(s) => Pin::new(s).poll_write(ctx, buf),
             MaybeHttpsStream::Https(s) => Pin::new(s).poll_write(ctx, buf),
@@ -261,7 +275,11 @@ where
         }
     }
 
-    fn poll_write_buf<B>(mut self: Pin<&mut Self>, ctx: &mut Context<'_>, buf: &mut B) -> Poll<io::Result<usize>>
+    fn poll_write_buf<B>(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+        buf: &mut B,
+    ) -> Poll<io::Result<usize>>
     where
         B: Buf,
     {
