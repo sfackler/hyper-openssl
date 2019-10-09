@@ -18,7 +18,7 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::io;
 use std::sync::Arc;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_openssl::SslStream;
 
 use cache::{SessionCache, SessionKey};
