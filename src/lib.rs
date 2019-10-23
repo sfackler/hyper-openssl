@@ -2,11 +2,14 @@
 #![warn(missing_docs)]
 #![doc(html_root_url = "https://docs.rs/hyper-openssl/0.8")]
 
+use crate::cache::{SessionCache, SessionKey};
 use antidote::Mutex;
 use bytes::{Buf, BufMut};
-use hyper::client::connect::{Connect, Connected, Destination};
+use hyper::client::connect::{Connected, Destination};
 #[cfg(feature = "runtime")]
 use hyper::client::HttpConnector;
+use hyper::service::Service;
+use once_cell::sync::OnceCell;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
 #[cfg(feature = "runtime")]
@@ -16,16 +19,13 @@ use openssl::ssl::{
 };
 use std::error::Error;
 use std::fmt::Debug;
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_openssl::SslStream;
-
-use cache::{SessionCache, SessionKey};
-use once_cell::sync::OnceCell;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 mod cache;
 #[cfg(test)]
@@ -102,18 +102,20 @@ impl HttpsConnector<HttpConnector> {
     }
 }
 
-impl<T> HttpsConnector<T>
+impl<S, T> HttpsConnector<S>
 where
-    T: Connect,
-    T::Transport: Debug + Sync + Send,
+    S: Service<Destination, Response = (T, Connected)> + Send,
+    S::Error: Into<Box<dyn Error + Send + Sync>>,
+    S::Future: Unpin + Send + 'static,
+    T: AsyncRead + AsyncWrite + Unpin + Debug + Sync + Send + 'static,
 {
     /// Creates a new `HttpsConnector`.
     ///
     /// The session cache configuration of `ssl` will be overwritten.
     pub fn with_connector(
-        http: T,
+        http: S,
         mut ssl: SslConnectorBuilder,
-    ) -> Result<HttpsConnector<T>, ErrorStack> {
+    ) -> Result<HttpsConnector<S>, ErrorStack> {
         let cache = Arc::new(Mutex::new(SessionCache::new()));
 
         ssl.set_session_cache_mode(SslSessionCacheMode::CLIENT);
@@ -154,25 +156,29 @@ where
     }
 }
 
-impl<T> Connect for HttpsConnector<T>
+impl<S, T> Service<Destination> for HttpsConnector<S>
 where
-    T: Connect,
-    T::Transport: Debug + Sync,
-    T::Future: 'static,
+    S: Service<Destination, Response = (T, Connected)> + Send,
+    S::Error: Into<Box<dyn Error + Send + Sync>>,
+    S::Future: Unpin + Send + 'static,
+    T: AsyncRead + AsyncWrite + Unpin + Debug + Sync + Send + 'static,
 {
-    type Transport = MaybeHttpsStream<T::Transport>;
+    type Response = (MaybeHttpsStream<T>, Connected);
     type Error = Box<dyn Error + Sync + Send>;
-    type Future =
-        Pin<Box<dyn Future<Output = Result<(Self::Transport, Connected), Self::Error>> + Send>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn connect(&self, destination: Destination) -> Self::Future {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.http.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, destination: Destination) -> Self::Future {
         let tls_setup = if destination.scheme() == "https" {
             Some((self.inner.clone(), destination.clone()))
         } else {
             None
         };
 
-        let connect = self.http.connect(destination);
+        let connect = self.http.call(destination);
 
         let f = async {
             let (conn, mut connected) = connect.await.map_err(Into::into)?;
