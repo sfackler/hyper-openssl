@@ -5,11 +5,12 @@
 use crate::cache::{SessionCache, SessionKey};
 use antidote::Mutex;
 use bytes::{Buf, BufMut};
+use http::uri::Scheme;
 use hyper::client::connect::{Connected, Connection};
-use hyper::Uri;
 #[cfg(feature = "runtime")]
 use hyper::client::HttpConnector;
 use hyper::service::Service;
+use hyper::Uri;
 use once_cell::sync::OnceCell;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
@@ -22,13 +23,12 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::future::Future;
 use std::io;
+use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_openssl::SslStream;
-use std::mem::MaybeUninit;
-use http::uri::Scheme;
 
 mod cache;
 #[cfg(test)]
@@ -44,9 +44,7 @@ struct Inner {
     ssl: SslConnector,
     cache: Arc<Mutex<SessionCache>>,
     callback: Option<
-        Arc<
-            dyn Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send,
-        >,
+        Arc<dyn Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send>,
     >,
 }
 
@@ -150,10 +148,7 @@ where
     /// Registers a callback which can customize the configuration of each connection.
     pub fn set_callback<F>(&mut self, callback: F)
     where
-        F: Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack>
-            + 'static
-            + Sync
-            + Send,
+        F: Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send,
     {
         self.inner.callback = Some(Arc::new(callback));
     }
@@ -292,7 +287,10 @@ where
     }
 }
 
-impl<T> Connection for MaybeHttpsStream<T> where T: Connection {
+impl<T> Connection for MaybeHttpsStream<T>
+where
+    T: Connection,
+{
     fn connected(&self) -> Connected {
         match self {
             MaybeHttpsStream::Http(s) => s.connected(),

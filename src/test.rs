@@ -1,11 +1,11 @@
+use super::*;
+use futures::StreamExt;
 use hyper::client::HttpConnector;
 use hyper::server::conn::Http;
 use hyper::{service, Response};
 use hyper::{Body, Client};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use tokio::net::TcpListener;
-use super::*;
-use futures::StreamExt;
 
 #[tokio::test]
 #[cfg(feature = "runtime")]
