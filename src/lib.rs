@@ -154,14 +154,14 @@ where
     }
 }
 
-impl<S, T> Service<Uri> for HttpsConnector<S>
+impl<S> Service<Uri> for HttpsConnector<S>
 where
-    S: Service<Uri, Response = T> + Send,
+    S: Service<Uri> + Send,
     S::Error: Into<Box<dyn Error + Send + Sync>>,
     S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
+    S::Response: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
 {
-    type Response = MaybeHttpsStream<T>;
+    type Response = MaybeHttpsStream<S::Response>;
     type Error = Box<dyn Error + Sync + Send>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
