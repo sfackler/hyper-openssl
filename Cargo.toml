@@ -16,18 +16,20 @@ runtime = ["hyper/runtime"]
 
 [dependencies]
 antidote = "1.0.0"
-bytes = "0.4"
+bytes = "0.5"
+http = "0.2"
 hyper = { version = "=0.13.0-alpha.4", default-features = false }
 linked_hash_set = "0.1"
 once_cell = "1.0"
 openssl = "0.10.19"
 openssl-sys = "0.9.26"
-tokio-io = "=0.2.0-alpha.6"
-tokio-openssl = "=0.4.0-alpha.6"
+tokio = "0.2"
+tokio-openssl = "0.4"
 
 [dev-dependencies]
 hyper = "=0.13.0-alpha.4"
-tokio = "=0.2.0-alpha.6"
+tokio = { version = "0.2", features = ["full"] }
+futures = "0.3"
 
 [patch.crates-io]
 hyper = { git = "https://github.com/hyperium/hyper" }

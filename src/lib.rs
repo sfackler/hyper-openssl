@@ -5,7 +5,8 @@
 use crate::cache::{SessionCache, SessionKey};
 use antidote::Mutex;
 use bytes::{Buf, BufMut};
-use hyper::client::connect::{Connected, Destination};
+use hyper::client::connect::{Connected, Connection};
+use hyper::Uri;
 #[cfg(feature = "runtime")]
 use hyper::client::HttpConnector;
 use hyper::service::Service;
@@ -24,8 +25,10 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_openssl::SslStream;
+use std::mem::MaybeUninit;
+use http::uri::Scheme;
 
 mod cache;
 #[cfg(test)]
@@ -42,22 +45,22 @@ struct Inner {
     cache: Arc<Mutex<SessionCache>>,
     callback: Option<
         Arc<
-            dyn Fn(&mut ConnectConfiguration, &Destination) -> Result<(), ErrorStack> + Sync + Send,
+            dyn Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send,
         >,
     >,
 }
 
 impl Inner {
-    fn setup_ssl(&self, destination: &Destination) -> Result<ConnectConfiguration, ErrorStack> {
+    fn setup_ssl(&self, uri: &Uri, host: &str) -> Result<ConnectConfiguration, ErrorStack> {
         let mut conf = self.ssl.configure()?;
 
         if let Some(ref callback) = self.callback {
-            callback(&mut conf, destination)?;
+            callback(&mut conf, uri)?;
         }
 
         let key = SessionKey {
-            host: destination.host().to_string(),
-            port: destination.port().unwrap_or(443),
+            host: host.to_string(),
+            port: uri.port_u16().unwrap_or(443),
         };
 
         if let Some(session) = self.cache.lock().get(&key) {
@@ -104,10 +107,10 @@ impl HttpsConnector<HttpConnector> {
 
 impl<S, T> HttpsConnector<S>
 where
-    S: Service<Destination, Response = (T, Connected)> + Send,
+    S: Service<Uri, Response = T> + Send,
     S::Error: Into<Box<dyn Error + Send + Sync>>,
     S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Unpin + Debug + Sync + Send + 'static,
+    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
 {
     /// Creates a new `HttpsConnector`.
     ///
@@ -147,7 +150,7 @@ where
     /// Registers a callback which can customize the configuration of each connection.
     pub fn set_callback<F>(&mut self, callback: F)
     where
-        F: Fn(&mut ConnectConfiguration, &Destination) -> Result<(), ErrorStack>
+        F: Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack>
             + 'static
             + Sync
             + Send,
@@ -156,14 +159,14 @@ where
     }
 }
 
-impl<S, T> Service<Destination> for HttpsConnector<S>
+impl<S, T> Service<Uri> for HttpsConnector<S>
 where
-    S: Service<Destination, Response = (T, Connected)> + Send,
+    S: Service<Uri, Response = T> + Send,
     S::Error: Into<Box<dyn Error + Send + Sync>>,
     S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Unpin + Debug + Sync + Send + 'static,
+    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
 {
-    type Response = (MaybeHttpsStream<T>, Connected);
+    type Response = MaybeHttpsStream<T>;
     type Error = Box<dyn Error + Sync + Send>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -171,36 +174,29 @@ where
         self.http.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, destination: Destination) -> Self::Future {
-        let tls_setup = if destination.scheme() == "https" {
-            Some((self.inner.clone(), destination.clone()))
+    fn call(&mut self, uri: Uri) -> Self::Future {
+        let tls_setup = if uri.scheme() == Some(&Scheme::HTTPS) {
+            Some((self.inner.clone(), uri.clone()))
         } else {
             None
         };
 
-        let connect = self.http.call(destination);
+        let connect = self.http.call(uri);
 
         let f = async {
-            let (conn, mut connected) = connect.await.map_err(Into::into)?;
+            let conn = connect.await.map_err(Into::into)?;
 
-            let (inner, destination) = match tls_setup {
-                Some((inner, destination)) => (inner, destination),
-                None => return Ok((MaybeHttpsStream::Http(conn), connected)),
+            let (inner, uri) = match tls_setup {
+                Some((inner, uri)) => (inner, uri),
+                None => return Ok(MaybeHttpsStream::Http(conn)),
             };
 
-            let config = inner.setup_ssl(&destination)?;
-            let stream = tokio_openssl::connect(config, destination.host(), conn).await?;
+            let host = uri.host().ok_or_else(|| "URI missing host")?;
 
-            // Avoid unused_mut warnings on OpenSSL 1.0.1
-            connected = connected;
-            #[cfg(ossl102)]
-            {
-                if let Some(b"h2") = stream.ssl().selected_alpn_protocol() {
-                    connected = connected.negotiated_h2();
-                }
-            }
+            let config = inner.setup_ssl(&uri, host)?;
+            let stream = tokio_openssl::connect(config, host, conn).await?;
 
-            Ok((MaybeHttpsStream::Https(stream), connected))
+            Ok(MaybeHttpsStream::Https(stream))
         };
 
         Box::pin(f)
@@ -219,7 +215,7 @@ impl<T> AsyncRead for MaybeHttpsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [u8]) -> bool {
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [MaybeUninit<u8>]) -> bool {
         match &*self {
             MaybeHttpsStream::Http(s) => s.prepare_uninitialized_buffer(buf),
             MaybeHttpsStream::Https(s) => s.prepare_uninitialized_buffer(buf),
@@ -292,6 +288,26 @@ where
         match &mut *self {
             MaybeHttpsStream::Http(s) => Pin::new(s).poll_write_buf(ctx, buf),
             MaybeHttpsStream::Https(s) => Pin::new(s).poll_write_buf(ctx, buf),
+        }
+    }
+}
+
+impl<T> Connection for MaybeHttpsStream<T> where T: Connection {
+    fn connected(&self) -> Connected {
+        match self {
+            MaybeHttpsStream::Http(s) => s.connected(),
+            MaybeHttpsStream::Https(s) => {
+                let mut connected = s.get_ref().connected();
+                // Avoid unused_mut warnings on OpenSSL 1.0.1
+                connected = connected;
+                #[cfg(ossl102)]
+                {
+                    if s.ssl().selected_alpn_protocol() == Some(b"h2") {
+                        connected = connected.negotiated_h2();
+                    }
+                }
+                connected
+            }
         }
     }
 }
