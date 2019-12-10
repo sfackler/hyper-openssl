@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [v0.8.0] - 2019-12-10
+
+### Changed
+
+* Upgraded to hyper 0.13
+
 ## [v0.8.0-alpha.4] - 2019-09-04
 
 ### Changed
