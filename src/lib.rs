@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_openssl::SslStream;
+use tower_layer::Layer;
 
 mod cache;
 #[cfg(test)]
@@ -74,24 +75,16 @@ impl Inner {
     }
 }
 
-/// A Connector using OpenSSL to support `http` and `https` schemes.
-#[derive(Clone)]
-pub struct HttpsConnector<T> {
-    http: T,
+/// A layer which wraps services in an `HttpsConnector`.
+pub struct HttpsLayer {
     inner: Inner,
 }
 
-#[cfg(feature = "runtime")]
-impl HttpsConnector<HttpConnector> {
-    /// Creates a a new `HttpsConnector` using default settings.
+impl HttpsLayer {
+    /// Creates a new `HttpsLayer` with default settings.
     ///
-    /// The Hyper `HttpConnector` is used to perform the TCP socket connection. ALPN is configured to support both
-    /// HTTP/2 and HTTP/1.1.
-    ///
-    /// Requires the `runtime` Cargo feature.
-    pub fn new() -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
-        let mut http = HttpConnector::new();
-        http.enforce_http(false);
+    /// ALPN is configured to support both HTTP/1 and HTTP/1.1.
+    pub fn new() -> Result<HttpsLayer, ErrorStack> {
         let mut ssl = SslConnector::builder(SslMethod::tls())?;
         // avoid unused_mut warnings when building against OpenSSL 1.0.1
         ssl = ssl;
@@ -99,24 +92,13 @@ impl HttpsConnector<HttpConnector> {
         #[cfg(ossl102)]
         ssl.set_alpn_protos(b"\x02h2\x08http/1.1")?;
 
-        HttpsConnector::with_connector(http, ssl)
+        Self::with_connector(ssl)
     }
-}
 
-impl<S, T> HttpsConnector<S>
-where
-    S: Service<Uri, Response = T> + Send,
-    S::Error: Into<Box<dyn Error + Send + Sync>>,
-    S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
-{
-    /// Creates a new `HttpsConnector`.
+    /// Creates a new `HttpsLayer`.
     ///
     /// The session cache configuration of `ssl` will be overwritten.
-    pub fn with_connector(
-        http: S,
-        mut ssl: SslConnectorBuilder,
-    ) -> Result<HttpsConnector<S>, ErrorStack> {
+    pub fn with_connector(mut ssl: SslConnectorBuilder) -> Result<HttpsLayer, ErrorStack> {
         let cache = Arc::new(Mutex::new(SessionCache::new()));
 
         ssl.set_session_cache_mode(SslSessionCacheMode::CLIENT);
@@ -135,14 +117,73 @@ where
             move |_, session| cache.lock().remove(session)
         });
 
-        Ok(HttpsConnector {
-            http,
+        Ok(HttpsLayer {
             inner: Inner {
                 ssl: ssl.build(),
                 cache,
                 callback: None,
             },
         })
+    }
+
+    /// Registers a callback which can customize the configuration of each connection.
+    pub fn set_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send,
+    {
+        self.inner.callback = Some(Arc::new(callback));
+    }
+}
+
+impl<S> Layer<S> for HttpsLayer {
+    type Service = HttpsConnector<S>;
+
+    fn layer(&self, inner: S) -> HttpsConnector<S> {
+        HttpsConnector {
+            http: inner,
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+/// A Connector using OpenSSL to support `http` and `https` schemes.
+#[derive(Clone)]
+pub struct HttpsConnector<T> {
+    http: T,
+    inner: Inner,
+}
+
+#[cfg(feature = "runtime")]
+impl HttpsConnector<HttpConnector> {
+    /// Creates a a new `HttpsConnector` using default settings.
+    ///
+    /// The Hyper `HttpConnector` is used to perform the TCP socket connection. ALPN is configured to support both
+    /// HTTP/2 and HTTP/1.1.
+    ///
+    /// Requires the `runtime` Cargo feature.
+    pub fn new() -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
+        let mut http = HttpConnector::new();
+        http.enforce_http(false);
+
+        HttpsLayer::new().map(|l| l.layer(http))
+    }
+}
+
+impl<S, T> HttpsConnector<S>
+where
+    S: Service<Uri, Response = T> + Send,
+    S::Error: Into<Box<dyn Error + Send + Sync>>,
+    S::Future: Unpin + Send + 'static,
+    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
+{
+    /// Creates a new `HttpsConnector`.
+    ///
+    /// The session cache configuration of `ssl` will be overwritten.
+    pub fn with_connector(
+        http: S,
+        ssl: SslConnectorBuilder,
+    ) -> Result<HttpsConnector<S>, ErrorStack> {
+        HttpsLayer::with_connector(ssl).map(|l| l.layer(http))
     }
 
     /// Registers a callback which can customize the configuration of each connection.

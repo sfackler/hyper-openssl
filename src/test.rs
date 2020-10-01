@@ -11,7 +11,9 @@ use tokio::net::TcpListener;
 #[cfg(feature = "runtime")]
 async fn google() {
     let ssl = HttpsConnector::new().unwrap();
-    let client = Client::builder().keep_alive(false).build::<_, Body>(ssl);
+    let client = Client::builder()
+        .pool_max_idle_per_host(0)
+        .build::<_, Body>(ssl);
 
     for _ in 0..3 {
         let resp = client
@@ -48,7 +50,7 @@ async fn localhost() {
                 service::service_fn(|_| async { Ok::<_, io::Error>(Response::new(Body::empty())) });
 
             Http::new()
-                .keep_alive(false)
+                .http1_keep_alive(false)
                 .serve_connection(stream, service)
                 .await
                 .unwrap();

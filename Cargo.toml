@@ -25,6 +25,7 @@ openssl = "0.10.19"
 openssl-sys = "0.9.26"
 tokio = "0.2"
 tokio-openssl = "0.4"
+tower-layer = "0.3"
 
 [dev-dependencies]
 hyper = "0.13"
