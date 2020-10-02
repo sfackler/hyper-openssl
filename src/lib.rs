@@ -14,10 +14,8 @@ use hyper::Uri;
 use once_cell::sync::OnceCell;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
-#[cfg(feature = "runtime")]
-use openssl::ssl::SslMethod;
 use openssl::ssl::{
-    ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslSessionCacheMode,
+    ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod, SslSessionCacheMode,
 };
 use std::error::Error;
 use std::fmt::Debug;
