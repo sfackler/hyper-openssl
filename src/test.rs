@@ -8,7 +8,7 @@ use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use tokio::net::TcpListener;
 
 #[tokio::test]
-#[cfg(feature = "runtime")]
+#[cfg(feature = "tcp")]
 async fn google() {
     let ssl = HttpsConnector::new().unwrap();
     let client = Client::builder()
@@ -28,7 +28,7 @@ async fn google() {
 
 #[tokio::test]
 async fn localhost() {
-    let mut listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
 
     let server = async move {
@@ -44,7 +44,10 @@ async fn localhost() {
 
         for _ in 0..3 {
             let stream = listener.accept().await.unwrap().0;
-            let stream = tokio_openssl::accept(&acceptor, stream).await.unwrap();
+            let ssl = Ssl::new(acceptor.context()).unwrap();
+            let mut stream = SslStream::new(ssl, stream).unwrap();
+
+            Pin::new(&mut stream).accept().await.unwrap();
 
             let service =
                 service::service_fn(|_| async { Ok::<_, io::Error>(Response::new(Body::empty())) });
@@ -93,7 +96,7 @@ async fn localhost() {
 async fn alpn_h2() {
     use openssl::ssl::{self, AlpnError};
 
-    let mut listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
 
     let server = async move {
@@ -110,7 +113,10 @@ async fn alpn_h2() {
         let acceptor = acceptor.build();
 
         let stream = listener.accept().await.unwrap().0;
-        let stream = tokio_openssl::accept(&acceptor, stream).await.unwrap();
+        let ssl = Ssl::new(acceptor.context()).unwrap();
+        let mut stream = SslStream::new(ssl, stream).unwrap();
+
+        Pin::new(&mut stream).accept().await.unwrap();
         assert_eq!(stream.ssl().selected_alpn_protocol().unwrap(), b"h2");
 
         let service =

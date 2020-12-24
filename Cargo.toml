@@ -10,24 +10,24 @@ readme = "README.md"
 exclude = ["test/*"]
 
 [features]
-default = ["runtime"]
+# FIXME should not be turning on http1 by default: https://github.com/hyperium/hyper/issues/2376
+default = ["hyper/http1", "tcp"]
 
-runtime = ["hyper/runtime"]
+tcp = ["hyper/tcp"]
 
 [dependencies]
-antidote = "1.0.0"
-bytes = "0.5"
 http = "0.2"
-hyper = { version = "0.13", default-features = false }
+hyper = { version = "0.14", default-features = false, features = ["client"] }
 linked_hash_set = "0.1"
 once_cell = "1.0"
-openssl = "0.10.19"
+openssl = "0.10.32"
 openssl-sys = "0.9.26"
-tokio = "0.2"
-tokio-openssl = "0.4"
+parking_lot = "0.11"
+tokio = "1.0"
+tokio-openssl = "0.6"
 tower-layer = "0.3"
 
 [dev-dependencies]
-hyper = "0.13"
-tokio = { version = "0.2", features = ["full"] }
+hyper = { version = "0.14", features = ["full"] }
+tokio = { version = "1.0", features = ["full"] }
 futures = "0.3"

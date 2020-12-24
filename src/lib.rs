@@ -3,11 +3,9 @@
 #![doc(html_root_url = "https://docs.rs/hyper-openssl/0.8")]
 
 use crate::cache::{SessionCache, SessionKey};
-use antidote::Mutex;
-use bytes::{Buf, BufMut};
 use http::uri::Scheme;
 use hyper::client::connect::{Connected, Connection};
-#[cfg(feature = "runtime")]
+#[cfg(feature = "tcp")]
 use hyper::client::HttpConnector;
 use hyper::service::Service;
 use hyper::Uri;
@@ -15,17 +13,19 @@ use once_cell::sync::OnceCell;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
 use openssl::ssl::{
-    ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod, SslSessionCacheMode,
+    self, ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod,
+    SslSessionCacheMode,
 };
+use openssl::x509::X509VerifyResult;
+use parking_lot::Mutex;
 use std::error::Error;
-use std::fmt::Debug;
+use std::fmt;
 use std::future::Future;
 use std::io;
-use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_openssl::SslStream;
 use tower_layer::Layer;
 
@@ -151,14 +151,14 @@ pub struct HttpsConnector<T> {
     inner: Inner,
 }
 
-#[cfg(feature = "runtime")]
+#[cfg(feature = "tcp")]
 impl HttpsConnector<HttpConnector> {
     /// Creates a a new `HttpsConnector` using default settings.
     ///
     /// The Hyper `HttpConnector` is used to perform the TCP socket connection. ALPN is configured to support both
     /// HTTP/2 and HTTP/1.1.
     ///
-    /// Requires the `runtime` Cargo feature.
+    /// Requires the `tcp` Cargo feature.
     pub fn new() -> Result<HttpsConnector<HttpConnector>, ErrorStack> {
         let mut http = HttpConnector::new();
         http.enforce_http(false);
@@ -171,8 +171,8 @@ impl<S, T> HttpsConnector<S>
 where
     S: Service<Uri, Response = T> + Send,
     S::Error: Into<Box<dyn Error + Send + Sync>>,
-    S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
+    S::Future: Send + 'static,
+    T: AsyncRead + AsyncWrite + Connection + Unpin,
 {
     /// Creates a new `HttpsConnector`.
     ///
@@ -197,8 +197,8 @@ impl<S> Service<Uri> for HttpsConnector<S>
 where
     S: Service<Uri> + Send,
     S::Error: Into<Box<dyn Error + Send + Sync>>,
-    S::Future: Unpin + Send + 'static,
-    S::Response: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
+    S::Future: Send + 'static,
+    S::Response: AsyncRead + AsyncWrite + Connection + Send + Unpin,
 {
     type Response = MaybeHttpsStream<S::Response>;
     type Error = Box<dyn Error + Sync + Send>;
@@ -228,12 +228,45 @@ where
             let host = uri.host().ok_or_else(|| "URI missing host")?;
 
             let config = inner.setup_ssl(&uri, host)?;
-            let stream = tokio_openssl::connect(config, host, conn).await?;
+            let ssl = config.into_ssl(host)?;
 
-            Ok(MaybeHttpsStream::Https(stream))
+            let mut stream = SslStream::new(ssl, conn)?;
+
+            match Pin::new(&mut stream).connect().await {
+                Ok(()) => Ok(MaybeHttpsStream::Https(stream)),
+                Err(error) => Err(Box::new(ConnectError {
+                    error,
+                    verify_result: stream.ssl().verify_result(),
+                }) as _),
+            }
         };
 
         Box::pin(f)
+    }
+}
+
+#[derive(Debug)]
+struct ConnectError {
+    error: ssl::Error,
+    verify_result: X509VerifyResult,
+}
+
+impl fmt::Display for ConnectError {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.error, fmt)?;
+
+        if self.verify_result != X509VerifyResult::OK {
+            fmt.write_str(": ")?;
+            fmt::Display::fmt(&self.verify_result, fmt)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Error for ConnectError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.error)
     }
 }
 
@@ -249,35 +282,14 @@ impl<T> AsyncRead for MaybeHttpsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [MaybeUninit<u8>]) -> bool {
-        match &*self {
-            MaybeHttpsStream::Http(s) => s.prepare_uninitialized_buffer(buf),
-            MaybeHttpsStream::Https(s) => s.prepare_uninitialized_buffer(buf),
-        }
-    }
-
     fn poll_read(
         mut self: Pin<&mut Self>,
-        ctx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
         match &mut *self {
-            MaybeHttpsStream::Http(s) => Pin::new(s).poll_read(ctx, buf),
-            MaybeHttpsStream::Https(s) => Pin::new(s).poll_read(ctx, buf),
-        }
-    }
-
-    fn poll_read_buf<B>(
-        mut self: Pin<&mut Self>,
-        ctx: &mut Context<'_>,
-        buf: &mut B,
-    ) -> Poll<io::Result<usize>>
-    where
-        B: BufMut,
-    {
-        match &mut *self {
-            MaybeHttpsStream::Http(s) => Pin::new(s).poll_read_buf(ctx, buf),
-            MaybeHttpsStream::Https(s) => Pin::new(s).poll_read_buf(ctx, buf),
+            MaybeHttpsStream::Http(s) => Pin::new(s).poll_read(cx, buf),
+            MaybeHttpsStream::Https(s) => Pin::new(s).poll_read(cx, buf),
         }
     }
 }
@@ -308,20 +320,6 @@ where
         match &mut *self {
             MaybeHttpsStream::Http(s) => Pin::new(s).poll_shutdown(ctx),
             MaybeHttpsStream::Https(s) => Pin::new(s).poll_shutdown(ctx),
-        }
-    }
-
-    fn poll_write_buf<B>(
-        mut self: Pin<&mut Self>,
-        ctx: &mut Context<'_>,
-        buf: &mut B,
-    ) -> Poll<io::Result<usize>>
-    where
-        B: Buf,
-    {
-        match &mut *self {
-            MaybeHttpsStream::Http(s) => Pin::new(s).poll_write_buf(ctx, buf),
-            MaybeHttpsStream::Https(s) => Pin::new(s).poll_write_buf(ctx, buf),
         }
     }
 }
