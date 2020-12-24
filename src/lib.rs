@@ -81,7 +81,7 @@ pub struct HttpsLayer {
 impl HttpsLayer {
     /// Creates a new `HttpsLayer` with default settings.
     ///
-    /// ALPN is configured to support both HTTP/1 and HTTP/1.1.
+    /// ALPN is configured to support both HTTP/2 and HTTP/1.1.
     pub fn new() -> Result<HttpsLayer, ErrorStack> {
         let mut ssl = SslConnector::builder(SslMethod::tls())?;
         // avoid unused_mut warnings when building against OpenSSL 1.0.1
