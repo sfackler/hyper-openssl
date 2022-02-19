@@ -1,6 +1,6 @@
 [package]
 name = "hyper-openssl"
-version = "0.9.1"
+version = "0.9.2"
 authors = ["Steven Fackler <sfackler@gmail.com>"]
 edition = "2018"
 description = "Hyper TLS support via OpenSSL"

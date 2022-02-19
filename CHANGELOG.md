@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [v0.9.2] - 2022-02-19
+
+### Changed
+
+* Upgraded `parking_lot` to 0.12.
+
 ## [v0.9.1] - 2020-12-29
 
 ### Fixed
@@ -106,7 +112,8 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.9.1...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.9.2...master
+[v0.9.2]: https://github.com/sfackler/hyper-openssl/compare/0.9.1...0.9.2
 [v0.9.1]: https://github.com/sfackler/hyper-openssl/compare/0.9.0...0.9.1
 [v0.9.0]: https://github.com/sfackler/hyper-openssl/compare/0.8.1...0.9.0
 [v0.8.1]: https://github.com/sfackler/hyper-openssl/compare/0.8.0...0.8.1
