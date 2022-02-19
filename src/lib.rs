@@ -35,13 +35,14 @@ mod test;
 
 fn key_index() -> Result<Index<Ssl, SessionKey>, ErrorStack> {
     static IDX: OnceCell<Index<Ssl, SessionKey>> = OnceCell::new();
-    IDX.get_or_try_init(|| Ssl::new_ex_index()).map(|v| *v)
+    IDX.get_or_try_init(Ssl::new_ex_index).map(|v| *v)
 }
 
 #[derive(Clone)]
 struct Inner {
     ssl: SslConnector,
     cache: Arc<Mutex<SessionCache>>,
+    #[allow(clippy::type_complexity)]
     callback: Option<
         Arc<dyn Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send>,
     >,
@@ -84,8 +85,6 @@ impl HttpsLayer {
     /// ALPN is configured to support both HTTP/2 and HTTP/1.1.
     pub fn new() -> Result<HttpsLayer, ErrorStack> {
         let mut ssl = SslConnector::builder(SslMethod::tls())?;
-        // avoid unused_mut warnings when building against OpenSSL 1.0.1
-        ssl = ssl;
 
         #[cfg(ossl102)]
         ssl.set_alpn_protos(b"\x02h2\x08http/1.1")?;
@@ -202,6 +201,7 @@ where
 {
     type Response = MaybeHttpsStream<S::Response>;
     type Error = Box<dyn Error + Sync + Send>;
+    #[allow(clippy::type_complexity)]
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -225,7 +225,7 @@ where
                 None => return Ok(MaybeHttpsStream::Http(conn)),
             };
 
-            let host = uri.host().ok_or_else(|| "URI missing host")?;
+            let host = uri.host().ok_or("URI missing host")?;
 
             let config = inner.setup_ssl(&uri, host)?;
             let ssl = config.into_ssl(host)?;
@@ -333,8 +333,6 @@ where
             MaybeHttpsStream::Http(s) => s.connected(),
             MaybeHttpsStream::Https(s) => {
                 let mut connected = s.get_ref().connected();
-                // Avoid unused_mut warnings on OpenSSL 1.0.1
-                connected = connected;
                 #[cfg(ossl102)]
                 {
                     if s.ssl().selected_alpn_protocol() == Some(b"h2") {

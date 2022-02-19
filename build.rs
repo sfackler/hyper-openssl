@@ -1,5 +1,6 @@
 use std::env;
 
+#[allow(clippy::unusual_byte_groupings)]
 fn main() {
     if let Ok(version) = env::var("DEP_OPENSSL_VERSION_NUMBER") {
         let version = u64::from_str_radix(&version, 16).unwrap();

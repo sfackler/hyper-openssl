@@ -58,7 +58,7 @@ impl SessionCache {
             .entry(key.clone())
             .or_insert_with(LinkedHashSet::new)
             .insert(session.clone());
-        self.reverse.insert(session.clone(), key);
+        self.reverse.insert(session, key);
     }
 
     pub fn get(&mut self, key: &SessionKey) -> Option<SslSession> {

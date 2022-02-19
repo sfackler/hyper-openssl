@@ -22,7 +22,7 @@ async fn google() {
             .unwrap();
         assert!(resp.status().is_success(), "{}", resp.status());
         let mut body = resp.into_body();
-        while let Some(_) = body.next().await.transpose().unwrap() {}
+        while body.next().await.transpose().unwrap().is_some() {}
     }
 }
 
@@ -87,7 +87,7 @@ async fn localhost() {
             .unwrap();
         assert!(resp.status().is_success(), "{}", resp.status());
         let mut body = resp.into_body();
-        while let Some(_) = body.next().await.transpose().unwrap() {}
+        while body.next().await.transpose().unwrap().is_some() {}
     }
 }
 
@@ -145,5 +145,5 @@ async fn alpn_h2() {
         .unwrap();
     assert!(resp.status().is_success(), "{}", resp.status());
     let mut body = resp.into_body();
-    while let Some(_) = body.next().await.transpose().unwrap() {}
+    while body.next().await.transpose().unwrap().is_some() {}
 }
