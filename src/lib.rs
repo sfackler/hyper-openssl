@@ -77,6 +77,7 @@ impl Inner {
 /// A layer which wraps services in an `HttpsConnector`.
 pub struct HttpsLayer {
     inner: Inner,
+    server_name: Option<Arc<str>>,
 }
 
 impl HttpsLayer {
@@ -120,7 +121,19 @@ impl HttpsLayer {
                 cache,
                 callback: None,
             },
+            server_name: None
         })
+    }
+
+    /// Overrides server name for the purposes of connection establishment.
+    /// 
+    /// By default, `hyper-openssl` will extract host portion of the URL and
+    /// verify that server certificate includes this value.
+    /// 
+    /// If this function is called, provided `server_name` will be used instead,
+    /// and URL will not affect certificate veritication.
+    pub fn override_server_name(&mut self, server_name: &str) {
+        self.server_name = Some(server_name.into());
     }
 
     /// Registers a callback which can customize the configuration of each connection.
@@ -139,6 +152,7 @@ impl<S> Layer<S> for HttpsLayer {
         HttpsConnector {
             http: inner,
             inner: self.inner.clone(),
+            server_name: self.server_name.clone()
         }
     }
 }
@@ -148,6 +162,7 @@ impl<S> Layer<S> for HttpsLayer {
 pub struct HttpsConnector<T> {
     http: T,
     inner: Inner,
+    server_name: Option<Arc<str>>,
 }
 
 #[cfg(feature = "tcp")]
@@ -181,6 +196,17 @@ where
         ssl: SslConnectorBuilder,
     ) -> Result<HttpsConnector<S>, ErrorStack> {
         HttpsLayer::with_connector(ssl).map(|l| l.layer(http))
+    }
+
+    /// Overrides server name for the purposes of connection establishment.
+    /// 
+    /// By default, `hyper-openssl` will extract host portion of the URL and
+    /// verify that server certificate includes this value.
+    /// 
+    /// If this function is called, provided `server_name` will be used instead,
+    /// and URL will not affect certificate veritication.
+    pub fn override_server_name(&mut self, server_name: &str) {
+        self.server_name = Some(server_name.into());
     }
 
     /// Registers a callback which can customize the configuration of each connection.
@@ -217,7 +243,9 @@ where
 
         let connect = self.http.call(uri);
 
-        let f = async {
+        let overriden_server_name = self.server_name.clone();
+
+        let f = async move {
             let conn = connect.await.map_err(Into::into)?;
 
             let (inner, uri) = match tls_setup {
@@ -225,7 +253,10 @@ where
                 None => return Ok(MaybeHttpsStream::Http(conn)),
             };
 
-            let host = uri.host().ok_or("URI missing host")?;
+            let host = match overriden_server_name.as_deref() {
+                Some(sn) => sn,
+                None => uri.host().ok_or("URI missing host")?
+            };
 
             let config = inner.setup_ssl(&uri, host)?;
             let ssl = config.into_ssl(host)?;
