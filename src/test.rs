@@ -1,6 +1,6 @@
 use std::{io, pin::Pin};
 
-use hyper::{client::conn::http1, header::HOST, server, service, Request, Response};
+use hyper::{client::conn::http1, server, service, Request, Response};
 use hyper_util::rt::TokioIo;
 use openssl::ssl::{Ssl, SslAcceptor, SslConnector, SslFiletype, SslMethod};
 use tokio::net::{TcpListener, TcpStream};
@@ -58,9 +58,6 @@ async fn client_server() {
         }
     });
 
-    let req = Request::builder()
-        .header(HOST, "google.com")
-        .body(String::new())
-        .unwrap();
+    let req = Request::builder().body(String::new()).unwrap();
     tx.send_request(req).await.unwrap();
 }
