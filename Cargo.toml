@@ -9,13 +9,10 @@ repository = "https://github.com/sfackler/hyper-openssl"
 readme = "README.md"
 
 [dependencies]
-hyper = "1"
+hyper = "1.0.1"
 openssl = "0.10.32"
 
 [dev-dependencies]
 hyper = { version = "1", features = ["full"] }
-hyper-util = { git = "https://github.com/hyperium/hyper-util" }
+hyper-util = { version = "0.1", features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }
-
-[patch.crates-io]
-hyper = { git = "https://github.com/sfackler/hyper", branch = "readbuf-init-constructor" }
