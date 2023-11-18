@@ -1,20 +1,21 @@
 //! Hyper TLS support via OpenSSL.
 #![warn(missing_docs)]
 
-use std::{
-    fmt, future,
-    io::{self, Read as _, Write as _},
-    pin::Pin,
-    ptr, slice,
-    task::{Context, Poll},
-};
-
 use hyper::rt::{Read, ReadBuf, ReadBufCursor, Write};
-use openssl::{
-    error::ErrorStack,
-    ssl::{self, ErrorCode, Ssl},
-};
+use openssl::error::ErrorStack;
+use openssl::ssl::{self, ErrorCode, Ssl, SslRef};
+use std::fmt;
+use std::future;
+use std::io::{self, Read as _, Write as _};
+use std::pin::Pin;
+use std::ptr;
+use std::slice;
+use std::task::{Context, Poll};
 
+#[cfg(feature = "client-legacy")]
+mod cache;
+#[cfg(feature = "client-legacy")]
+pub mod client;
 #[cfg(test)]
 mod test;
 
@@ -137,6 +138,28 @@ where
     /// A convenience method wrapping [`poll_do_handshake`](Self::poll_do_handshake).
     pub async fn do_handshake(mut self: Pin<&mut Self>) -> Result<(), ssl::Error> {
         future::poll_fn(|cx| self.as_mut().poll_do_handshake(cx)).await
+    }
+}
+
+impl<S> SslStream<S> {
+    /// Returns a shared reference to the `Ssl` object associated with this stream.
+    pub fn ssl(&self) -> &SslRef {
+        self.0.ssl()
+    }
+
+    /// Returns a shared reference to the underlying stream.
+    pub fn get_ref(&self) -> &S {
+        &self.0.get_ref().stream
+    }
+
+    /// Returns a mutable reference to the underlying stream.
+    pub fn get_mut(&mut self) -> &mut S {
+        &mut self.0.get_mut().stream
+    }
+
+    /// Returns a pinned mutable reference to the underlying stream.
+    pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut S> {
+        unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0.get_mut().stream) }
     }
 
     fn with_context<F, R>(self: Pin<&mut Self>, ctx: &mut Context<'_>, f: F) -> R
