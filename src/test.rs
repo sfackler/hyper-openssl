@@ -65,7 +65,7 @@ async fn raw_client_server() {
 #[tokio::test]
 #[cfg(feature = "client-legacy")]
 async fn legacy_client_server() {
-    use crate::client::HttpsConnector;
+    use crate::client::legacy::HttpsConnector;
     use hyper::body::Body;
     use hyper_util::client::legacy::connect::HttpConnector;
     use hyper_util::client::legacy::Client;
@@ -142,7 +142,7 @@ async fn legacy_client_server() {
 #[tokio::test]
 #[cfg(all(feature = "client-legacy", ossl102))]
 async fn legacy_alpn_h2() {
-    use crate::client::HttpsConnector;
+    use crate::client::legacy::HttpsConnector;
     use hyper::body::Body;
     use hyper_util::client::legacy::connect::HttpConnector;
     use hyper_util::client::legacy::Client;

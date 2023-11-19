@@ -1,5 +1,5 @@
-//! hyper-util client support.
-use crate::cache::{SessionCache, SessionKey};
+//! hyper-util legacy client support.
+use crate::client::cache::{SessionCache, SessionKey};
 use crate::SslStream;
 use http::uri::Scheme;
 use hyper::rt::{Read, ReadBufCursor, Write};

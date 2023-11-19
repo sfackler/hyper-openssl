@@ -13,8 +13,6 @@ use std::slice;
 use std::task::{Context, Poll};
 
 #[cfg(feature = "client-legacy")]
-mod cache;
-#[cfg(feature = "client-legacy")]
 pub mod client;
 #[cfg(test)]
 mod test;
