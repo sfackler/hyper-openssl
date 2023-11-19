@@ -3,7 +3,8 @@ use linked_hash_set::LinkedHashSet;
 use openssl::ssl::SslVersion;
 use openssl::ssl::{SslSession, SslSessionRef};
 use std::borrow::Borrow;
-use std::collections::hash_map::{Entry, HashMap};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 #[derive(Hash, PartialEq, Eq, Clone)]
@@ -28,7 +29,7 @@ impl Hash for HashSession {
     where
         H: Hasher,
     {
-        self.0.id().hash(state);
+        self.0.id().hash(state)
     }
 }
 
@@ -56,16 +57,14 @@ impl SessionCache {
 
         self.sessions
             .entry(key.clone())
-            .or_insert_with(LinkedHashSet::new)
+            .or_default()
             .insert(session.clone());
         self.reverse.insert(session, key);
     }
 
     pub fn get(&mut self, key: &SessionKey) -> Option<SslSession> {
-        let session = {
-            let sessions = self.sessions.get_mut(key)?;
-            sessions.front().cloned()?.0
-        };
+        let sessions = self.sessions.get_mut(key)?;
+        let session = sessions.front().cloned()?.0;
 
         #[cfg(ossl111)]
         {
