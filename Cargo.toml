@@ -9,6 +9,9 @@ repository = "https://github.com/sfackler/hyper-openssl"
 readme = "README.md"
 rust-version = "1.68"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = []
 
