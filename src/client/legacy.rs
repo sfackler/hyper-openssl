@@ -173,7 +173,7 @@ where
             let conn = connect.await.map_err(Into::into)?;
 
             let Some((inner, uri)) = tls_setup else {
-                return Ok(MaybeHttpsStream::Http(conn))
+                return Ok(MaybeHttpsStream::Http(conn));
             };
 
             let Some(host) = uri.host() else {
