@@ -74,3 +74,4 @@ jobs:
           path: target
           key: test-target-${{ runner.os }}-${{ steps.rust-version.outputs.version }}-${{ hashFiles('Cargo.lock') }}y
       - run: cargo test --all
+      - run: cargo test --all --all-features
