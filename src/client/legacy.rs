@@ -4,7 +4,9 @@ use crate::SslStream;
 use http::uri::Scheme;
 use hyper::rt::{Read, ReadBufCursor, Write};
 use hyper::Uri;
-use hyper_util::client::legacy::connect::{Connected, Connection, HttpConnector};
+#[cfg(feature = "tokio")]
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::connect::{Connected, Connection};
 use once_cell::sync::OnceCell;
 use openssl::error::ErrorStack;
 use openssl::ex_data::Index;
@@ -115,6 +117,7 @@ pub struct HttpsConnector<T> {
     inner: Inner,
 }
 
+#[cfg(feature = "tokio")]
 impl HttpsConnector<HttpConnector> {
     /// Creates a new `HttpsConnector` using default settings.
     ///

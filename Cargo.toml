@@ -2,7 +2,7 @@
 name = "hyper-openssl"
 version = "0.10.0"
 authors = ["Steven Fackler <sfackler@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "Hyper TLS support via OpenSSL"
 license = "MIT/Apache-2.0"
 repository = "https://github.com/sfackler/hyper-openssl"
@@ -27,6 +27,7 @@ client-legacy = [
     "hyper-util?/client-legacy",
 ]
 
+tokio = ["hyper-util?/tokio"]
 
 [dependencies]
 http = { version = "1.0.0", optional = true }
