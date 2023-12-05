@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [v0.10.2] - 2023-12-04
+
+### Fixed
+
+* Avoid creation of possibly-uninitialized `[u8]` slices.
+
 ## [v0.10.1] - 2023-11-20
 
 ### Fixed
@@ -124,7 +130,8 @@
 
 Look at the [release tags] for information about older releases.
 
-[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.10.1...master
+[Unreleased]: https://github.com/sfackler/hyper-openssl/compare/0.10.2...master
+[v0.10.2]: https://github.com/sfackler/hyper-openssl/compare/0.10.1...0.10.2
 [v0.10.1]: https://github.com/sfackler/hyper-openssl/compare/0.10.0...0.10.1
 [v0.10.0]: https://github.com/sfackler/hyper-openssl/compare/0.9.2...0.10.0
 [v0.9.2]: https://github.com/sfackler/hyper-openssl/compare/0.9.1...0.9.2
