@@ -6,10 +6,9 @@ use openssl::error::ErrorStack;
 use openssl::ssl::{self, ErrorCode, Ssl, SslRef};
 use std::fmt;
 use std::future;
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Write as _};
 use std::pin::Pin;
 use std::ptr;
-use std::slice;
 use std::task::{Context, Poll};
 
 #[cfg(feature = "client-legacy")]
@@ -183,20 +182,14 @@ where
         cx: &mut Context<'_>,
         mut buf: ReadBufCursor<'_>,
     ) -> Poll<io::Result<()>> {
-        self.with_context(cx, |s| {
-            // This isn't really "proper", but rust-openssl doesn't currently expose a suitable
-            // interface even though OpenSSL itself doesn't require the buffer to be initialized.
-            // So this is good enough for now.
-            let slice = unsafe {
-                let buf = buf.as_mut();
-                slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), buf.len())
-            };
-
-            match cvt(s.read(slice))? {
-                Poll::Ready(nread) => unsafe {
+        // SAFETY: read_uninit doesn't de-initialize the buffer and guarantees that nread bytes have
+        // been initialized.
+        self.with_context(cx, |s| unsafe {
+            match cvt(s.read_uninit(buf.as_mut()))? {
+                Poll::Ready(nread) => {
                     buf.advance(nread);
                     Poll::Ready(Ok(()))
-                },
+                }
                 Poll::Pending => Poll::Pending,
             }
         })
