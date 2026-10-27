@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [v0.10.3] - 2026-10-27
+
+### Changed
+
+* Upgraded `parking_lot` to 0.13.
+
 ## [v0.10.2] - 2023-12-04
 
 ### Fixed
