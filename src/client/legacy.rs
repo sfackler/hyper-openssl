@@ -182,6 +182,8 @@ where
             let Some(host) = uri.host() else {
                 return Err("URI missing host".into());
             };
+            // Strip bracketed IPs
+            let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
 
             let mut config = inner.ssl.configure()?;
 
