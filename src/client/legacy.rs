@@ -194,9 +194,10 @@ where
                 port: uri.port_u16().unwrap_or(443),
             };
 
-            if let Some(session) = inner.cache.lock().get(&key) {
+            let offered = inner.cache.lock().get(&key);
+            if let Some(session) = &offered {
                 unsafe {
-                    config.set_session(&session)?;
+                    config.set_session(session)?;
                 }
             }
 
@@ -208,7 +209,18 @@ where
             let mut stream = SslStream::new(ssl, conn)?;
 
             match Pin::new(&mut stream).connect().await {
-                Ok(()) => Ok(MaybeHttpsStream::Https(stream)),
+                Ok(()) => {
+                    // The server declined the offered session and negotiated a new one, which
+                    // the new session callback has cached. OpenSSL only evicts sessions that
+                    // failed or expired, so drop the declined one ourselves: it would otherwise be
+                    // offered on every later connection, and none of them would resume.
+                    if let Some(offered) = offered {
+                        if !stream.ssl().session_reused() {
+                            inner.cache.lock().remove(&offered);
+                        }
+                    }
+                    Ok(MaybeHttpsStream::Https(stream))
+                }
                 Err(error) => Err(Box::new(ConnectError {
                     error,
                     verify_result: stream.ssl().verify_result(),

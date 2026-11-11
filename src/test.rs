@@ -140,6 +140,112 @@ async fn legacy_client_server() {
 }
 
 #[tokio::test]
+#[cfg(all(feature = "client-legacy", ossl111))]
+async fn legacy_resumes_after_server_declines_session() {
+    let (port, server) = spawn_restarting_server().await;
+    let client = legacy_client();
+
+    for _ in 0..4 {
+        get(&client, port).await;
+    }
+
+    assert_eq!(server.await.unwrap(), [false, true, false, true]);
+}
+
+#[cfg(all(feature = "client-legacy", ossl111))]
+type LegacyClient = hyper_util::client::legacy::Client<
+    crate::client::legacy::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    String,
+>;
+
+// Serves two connections, then two more with a fresh acceptor, which knows none of the sessions
+// the first issued, as after a restart. Reports for each connection whether it resumed a session.
+// TLS 1.2 only: TLS 1.3 tickets are single-use and already leave the client's cache when offered.
+#[cfg(all(feature = "client-legacy", ossl111))]
+async fn spawn_restarting_server() -> (u16, tokio::task::JoinHandle<Vec<bool>>) {
+    use openssl::ssl::SslVersion;
+
+    fn tls12_acceptor() -> SslAcceptor {
+        let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+        acceptor
+            .set_private_key_file("test/key.pem", SslFiletype::PEM)
+            .unwrap();
+        acceptor
+            .set_certificate_chain_file("test/cert.pem")
+            .unwrap();
+        acceptor
+            .set_max_proto_version(Some(SslVersion::TLS1_2))
+            .unwrap();
+        acceptor.build()
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let mut resumed = vec![];
+        for _ in 0..2 {
+            let acceptor = tls12_acceptor();
+            for _ in 0..2 {
+                let ssl = Ssl::new(acceptor.context()).unwrap();
+                let stream = listener.accept().await.unwrap().0;
+                let mut stream = SslStream::new(ssl, TokioIo::new(stream)).unwrap();
+                Pin::new(&mut stream).accept().await.unwrap();
+                resumed.push(stream.ssl().session_reused());
+
+                let service = service::service_fn(|_| async {
+                    Ok::<_, io::Error>(Response::new(String::new()))
+                });
+                server::conn::http1::Builder::new()
+                    .keep_alive(false)
+                    .serve_connection(stream, service)
+                    .await
+                    .unwrap();
+            }
+        }
+        resumed
+    });
+    (port, server)
+}
+
+// A client which opens a new connection for every request.
+#[cfg(all(feature = "client-legacy", ossl111))]
+fn legacy_client() -> LegacyClient {
+    use crate::client::legacy::HttpsConnector;
+    use hyper_util::client::legacy::connect::HttpConnector;
+    use hyper_util::client::legacy::Client;
+    use hyper_util::rt::TokioExecutor;
+
+    let mut connector = HttpConnector::new();
+    connector.enforce_http(false);
+    let mut ssl = SslConnector::builder(SslMethod::tls()).unwrap();
+    ssl.set_ca_file("test/cert.pem").unwrap();
+    let ssl = HttpsConnector::with_connector(connector, ssl).unwrap();
+    Client::builder(TokioExecutor::new())
+        .pool_max_idle_per_host(0)
+        .build(ssl)
+}
+
+#[cfg(all(feature = "client-legacy", ossl111))]
+async fn get(client: &LegacyClient, port: u16) {
+    use hyper::body::Body;
+    use std::future;
+    use std::pin::pin;
+
+    let resp = client
+        .get(format!("https://localhost:{port}").parse().unwrap())
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let mut body = pin!(resp.into_body());
+    while future::poll_fn(|cx| body.as_mut().poll_frame(cx))
+        .await
+        .transpose()
+        .unwrap()
+        .is_some()
+    {}
+}
+
+#[tokio::test]
 #[cfg(all(feature = "client-legacy", ossl102))]
 async fn legacy_alpn_h2() {
     use crate::client::legacy::HttpsConnector;
