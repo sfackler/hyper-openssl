@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+* The legacy client no longer keeps offering a session the server declined, so it resumes sessions again after the server loses its session state.
+
 ## [v0.10.3] - 2026-10-27
 
 ### Changed
